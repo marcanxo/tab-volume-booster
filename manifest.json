@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "Tab Volume Booster",
+  "version": "1.0.0",
+  "minimum_chrome_version": "116",
+  "description": "Make any tab louder (up to 6x) or quieter, keeping fullscreen when possible. Per-tab memory, built-in limiter, no data collected.",
+  "permissions": ["tabCapture", "offscreen", "storage", "scripting", "activeTab"],
+  "host_permissions": ["<all_urls>"],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Tab Volume Booster"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

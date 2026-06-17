@@ -1,0 +1,11 @@
+# OS cruft
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor / temp files
+*.swp
+*~
+
+# Packaging output (e.g. a zip for "Load unpacked" / Web Store)
+*.zip

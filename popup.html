@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<style>
+  :root {
+    --bg: #131519;
+    --panel: #1b1e24;
+    --line: #2a2f38;
+    --text: #e7eaef;
+    --muted: #8b919e;
+    --accent: #6ea8fe;      /* recolored live from JS as boost rises */
+    --glow: rgba(110, 168, 254, 0.0);
+    --mono: ui-monospace, "Cascadia Code", "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+    --sans: "Segoe UI", "Helvetica Neue", system-ui, sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 268px;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body {
+    padding: 16px 16px 14px;
+    background:
+      radial-gradient(120% 90% at 50% -10%, #1d2128 0%, var(--bg) 60%),
+      var(--bg);
+    position: relative;
+  }
+
+  /* faint grain for texture */
+  body::after {
+    content: "";
+    position: absolute; inset: 0;
+    pointer-events: none;
+    opacity: 0.035;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='80' height='80'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  header {
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 14px;
+  }
+  .dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 10px var(--accent);
+    transition: background .25s, box-shadow .25s;
+  }
+  .title {
+    font-size: 11px; letter-spacing: .16em; text-transform: uppercase;
+    color: var(--muted); font-weight: 600;
+  }
+  .reset {
+    margin-left: auto;             /* push to the far right of the header */
+    background: none; border: 1px solid var(--line); color: var(--muted);
+    font-family: var(--mono); font-size: 9px; letter-spacing: .1em; text-transform: uppercase;
+    padding: 3px 8px; border-radius: 6px; cursor: pointer;
+    transition: color .15s, border-color .15s, transform .08s;
+  }
+  .reset:hover { color: var(--text); border-color: #3a4150; }
+  .reset:active { transform: scale(.95); }
+
+  .readout {
+    font-family: var(--mono);
+    font-size: 46px; font-weight: 600; line-height: 1;
+    letter-spacing: -.02em;
+    color: var(--accent);
+    text-shadow: 0 0 22px var(--glow);
+    transition: color .2s, text-shadow .2s;
+    display: flex; align-items: baseline; gap: 2px;
+    margin-bottom: 2px;
+  }
+  .readout .x { font-size: 22px; color: var(--muted); font-weight: 500; }
+
+  .sub {
+    font-size: 11px; color: var(--muted); margin-bottom: 8px;
+  }
+
+  .mode {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 10.5px; letter-spacing: .03em; font-weight: 600;
+    padding: 4px 10px; border-radius: 999px;
+    border: 1px solid var(--line); color: var(--muted);
+    margin-bottom: 16px; cursor: default;
+    transition: color .2s, border-color .2s;
+  }
+  .mode .led {
+    width: 6px; height: 6px; border-radius: 50%; background: var(--muted);
+    transition: background .2s, box-shadow .2s;
+  }
+  .mode[data-state="element"] { color: #74e0a6; border-color: #2c5a45; }
+  .mode[data-state="element"] .led { background: #74e0a6; box-shadow: 0 0 8px #74e0a6; }
+  .mode[data-state="capture"] { color: #e8b765; border-color: #5a4a2c; }
+  .mode[data-state="capture"] .led { background: #e8b765; box-shadow: 0 0 8px #e8b765; }
+  .mode[data-state="paused"] { color: #74e0a6; border-color: #2c5a45; }
+  .mode[data-state="paused"] .led { background: #74e0a6; box-shadow: 0 0 8px #74e0a6; }
+
+  /* --- slider --- */
+  .slider {
+    -webkit-appearance: none; appearance: none;
+    width: 100%; height: 6px; border-radius: 6px;
+    background: linear-gradient(
+      to right,
+      var(--accent) 0%,
+      var(--accent) var(--fill, 0%),
+      #2c313b var(--fill, 0%),
+      #2c313b 100%
+    );
+    outline: none; cursor: pointer;
+  }
+  .slider::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 18px; height: 18px; border-radius: 50%;
+    background: #f2f4f8;
+    border: 3px solid var(--accent);
+    box-shadow: 0 2px 6px rgba(0,0,0,.5), 0 0 12px var(--glow);
+    transition: border-color .2s, box-shadow .2s, transform .08s;
+  }
+  .slider:active::-webkit-slider-thumb { transform: scale(1.12); }
+
+  .scale {
+    display: flex; justify-content: space-between;
+    font-family: var(--mono); font-size: 9.5px; color: #5a606b;
+    margin: 8px 1px 0;
+  }
+  .scale .u { color: #aeb4bf; }  /* unity (1× = off) marker — left of center on the 0–6 track */
+
+  /* --- limiter row --- */
+  .row {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-top: 16px; padding-top: 13px;
+    border-top: 1px solid var(--line);
+  }
+  .row .label { font-size: 12px; color: var(--text); }
+  .row .hint  { font-size: 10px; color: var(--muted); margin-top: 1px; }
+
+  .toggle {
+    position: relative; width: 38px; height: 21px; flex: none;
+    border-radius: 21px; background: #2c313b; cursor: pointer;
+    transition: background .2s; border: none;
+  }
+  .toggle::after {
+    content: ""; position: absolute; top: 2px; left: 2px;
+    width: 17px; height: 17px; border-radius: 50%;
+    background: #f2f4f8; transition: transform .2s;
+  }
+  .toggle[aria-checked="true"] { background: var(--accent); }
+  .toggle[aria-checked="true"]::after { transform: translateX(17px); }
+
+  /* --- conflict / fullscreen-priority --- */
+  .fsrow { display: none; } /* shown by JS only when there's a conflict */
+  .notice {
+    display: none;
+    margin-top: 12px; padding: 9px 11px;
+    font-size: 11px; line-height: 1.45; color: #e8b765;
+    border: 1px solid #5a4a2c; border-radius: 9px;
+    background: rgba(232, 183, 101, 0.07);
+  }
+  /* paused = boost intentionally not applied: de-emphasize the readout so it doesn't look active */
+  body.paused-view .readout { opacity: .5; }
+
+  /* --- blocked state --- */
+  .blocked {
+    display: none;
+    font-size: 12px; color: var(--muted); line-height: 1.5;
+    padding: 6px 2px 2px;
+  }
+  body.is-blocked .controls { display: none; }
+  body.is-blocked .reset    { display: none; }
+  body.is-blocked .blocked  { display: block; }
+  body.is-blocked .readout  { opacity: .25; }
+  body.is-blocked .sub      { opacity: .4; }
+</style>
+</head>
+<body>
+  <header>
+    <span class="dot" id="dot"></span>
+    <span class="title">Volume Booster</span>
+    <button class="reset" id="reset" type="button" title="Reset to 1× (off)">reset</button>
+  </header>
+
+  <div class="readout" id="readout">1.0<span class="x">×</span></div>
+  <div class="sub" id="sub">Current tab</div>
+  <div class="mode" id="mode" data-state="" title=""><span class="led"></span><span id="modeText">Checking…</span></div>
+
+  <div class="controls">
+    <input class="slider" id="slider" type="range" min="0" max="1000" step="1" value="500" aria-label="Volume level" />
+    <div class="scale">
+      <span>0×</span><span class="u">1× off</span><span>6×</span>
+    </div>
+
+    <div class="row">
+      <div>
+        <div class="label">Limiter</div>
+        <div class="hint">Tames distortion on hard boosts</div>
+      </div>
+      <button class="toggle" id="limiter" role="switch" aria-checked="true" aria-label="Limiter"></button>
+    </div>
+
+    <div class="row fsrow" id="fsRow">
+      <div>
+        <div class="label">Prefer fullscreen</div>
+        <div class="hint">Skip capture — keep fullscreen, no boost</div>
+      </div>
+      <button class="toggle" id="fsToggle" role="switch" aria-checked="false" aria-label="Prefer fullscreen"></button>
+    </div>
+    <div class="notice" id="conflictMsg"></div>
+  </div>
+
+  <div class="blocked">
+    This page can't be boosted. Browser pages, the Web Store, and other extensions
+    are off-limits to audio capture. Open a normal site (YouTube, etc.) and try again.
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
