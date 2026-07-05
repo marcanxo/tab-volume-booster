@@ -241,6 +241,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return;
   }
 
+  if (msg.type === "navigated") {
+    // Same-tab transition without a page load: a player <iframe> was swapped / re-src'd
+    // ("next episode"), an SPA route changed, or a first user gesture just unlocked a frame
+    // whose engage was refused as 'suspended'. Re-assert the stored level. kickRestore
+    // no-ops after one storage read if this tab isn't at a non-unity level.
+    const tabId = sender.tab && sender.tab.id;
+    if (tabId != null) kickRestore(tabId, true);
+    return;
+  }
+
   if (msg.type === "setFsPriority") {
     // Per-tab "prefer fullscreen over capture" toggle. Re-evaluate the tab from a clean slate.
     serialized(msg.tabId, async () => {
@@ -356,7 +366,9 @@ async function kickRestore(tabId, deferIfBusy) {
 }
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (changeInfo.status !== "complete") return;               // only the load-complete edge
+  // status 'complete' = full load finished. changeInfo.url alone = SPA route change
+  // (history.pushState) — those never reach 'complete' again, but players swap on them.
+  if (changeInfo.status !== "complete" && typeof changeInfo.url !== "string") return;
   if (!tab || !tab.url || !/^https?:/.test(tab.url)) return;  // skip chrome:// / store / etc.
-  kickRestore(tabId, true); // defer-if-busy: a reload completing mid-restore queues one more pass
+  kickRestore(tabId, true); // defer-if-busy: a signal arriving mid-restore queues one more pass
 });

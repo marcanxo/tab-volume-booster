@@ -144,6 +144,64 @@
     S.mo.observe(document.documentElement, { childList: true, subtree: true });
   }
 
+  // --- same-tab transition detection --------------------------------------
+  // "Next episode" on many streaming sites swaps the player <iframe> (or its src)
+  // WITHOUT a page load and WITHOUT removing anything from the hooked frame's DOM —
+  // so neither the reload restore nor the elementLost watcher fires, and the boost
+  // silently resets to native 1× while the stored level still says otherwise.
+  // Every frame watches its own subtree for media/iframe swaps and nudges the
+  // worker, which no-ops instantly unless this tab actually has a level set.
+  let navPingTimer = null;
+  function pingNavigated() {
+    clearTimeout(navPingTimer);
+    navPingTimer = setTimeout(() => {
+      try { chrome.runtime.sendMessage({ type: "navigated" }); } catch (_) {}
+    }, 250);
+  }
+
+  // One-shot: when engage() refused because the AudioContext couldn't run (autoplay
+  // policy — fresh frame with no user activation yet), retry after the first gesture
+  // in this frame. Activation is per-frame, so this is the earliest it can succeed.
+  let gestureArmed = false;
+  function armGestureRetry() {
+    if (gestureArmed) return;
+    gestureArmed = true;
+    const once = () => {
+      gestureArmed = false;
+      window.removeEventListener("pointerdown", once, true);
+      window.removeEventListener("keydown", once, true);
+      pingNavigated();
+    };
+    window.addEventListener("pointerdown", once, true);
+    window.addEventListener("keydown", once, true);
+  }
+
+  const MEDIA_TAGS = /^(IFRAME|VIDEO|AUDIO)$/;
+  function touchesMedia(muts) {
+    for (const m of muts) {
+      if (m.type === "attributes") {
+        if (MEDIA_TAGS.test(m.target.tagName)) return true;
+        continue;
+      }
+      for (const list of [m.addedNodes, m.removedNodes]) {
+        for (const n of list) {
+          if (n.nodeType !== 1) continue;
+          if (MEDIA_TAGS.test(n.tagName)) return true;
+          if (n.querySelector && n.querySelector("iframe,video,audio")) return true;
+        }
+      }
+    }
+    return false;
+  }
+  const swapMo = new MutationObserver((muts) => { if (touchesMedia(muts)) pingNavigated(); });
+  swapMo.observe(document.documentElement, {
+    childList: true, subtree: true, attributes: true, attributeFilter: ["src"]
+  });
+  // SPA route changes that fire DOM-visible events. (history.pushState is invisible
+  // from this isolated world — the worker catches those via tabs.onUpdated url changes.)
+  window.addEventListener("popstate", pingNavigated);
+  window.addEventListener("hashchange", pingNavigated);
+
   async function engage(gain, useLimiter) {
     S.useLimiter = useLimiter !== false;
 
@@ -170,6 +228,7 @@
     if (ctx.state !== "running") await new Promise((r) => setTimeout(r, 150));
     if (ctx.state !== "running") {
       try { ctx.close(); } catch (_) {}
+      armGestureRetry(); // first click/key in this frame unlocks audio → auto-retry then
       return { ok: false, reason: "suspended" };
     }
 

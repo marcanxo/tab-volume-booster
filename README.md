@@ -1,5 +1,6 @@
 # Tab Volume Booster
 
+[![Chrome Web Store](https://img.shields.io/chrome-web-store/v/lcbedgoeigfomodfdiepidklaoplonii?label=Chrome%20Web%20Store&color=4285F4)](https://chromewebstore.google.com/detail/lcbedgoeigfomodfdiepidklaoplonii)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
 A Manifest V3 Chrome extension that makes any tab **louder (up to 6×) or quieter (down to silence)** — and keeps native fullscreen working whenever it can.
@@ -14,7 +15,7 @@ It's a *hybrid*: per tab it automatically picks the boosting method that preserv
 - **Fullscreen preserved by default.** On YouTube and most HTML5 sites it hooks the page's own media element, so native fullscreen keeps working while boosting.
 - **Per-tab memory.** Each tab remembers its own level while it's open (including across YouTube's autoplay/next-video). Closing the tab forgets it. Nothing is shared between tabs.
 - **Survives reload.** After an F5 the level re-applies automatically — no need to reopen the popup (see [Notes](#notes--limits) for the exceptions).
-- **Handles player element swaps.** When a site replaces its `<video>` (e.g. ad → content), the boost re-attaches to the new element.
+- **Handles player element swaps.** When a site replaces its `<video>` (e.g. ad → content) — or swaps the whole player `<iframe>` on a "next episode" transition without a page load — the boost re-attaches to the new element.
 - **Conflict handling.** If another app/extension already controls a tab's audio, you get a clear choice: boost via capture, or keep native fullscreen with no boost.
 - **Built-in limiter.** Tames distortion on hard boosts; toggle is click-free.
 - **One-click reset** back to 1× (off).
@@ -33,7 +34,13 @@ The mode is chosen by a **non-destructive pre-check** (source origin / `crossOri
 
 ---
 
-## Install (load unpacked)
+## Install
+
+### From the Chrome Web Store (recommended)
+
+**[➜ Install Tab Volume Booster](https://chromewebstore.google.com/detail/lcbedgoeigfomodfdiepidklaoplonii)** — one click, and updates arrive automatically.
+
+### From source (load unpacked)
 
 You can always install straight from source — no store needed (requires Chrome 116+):
 
