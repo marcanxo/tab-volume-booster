@@ -1,0 +1,80 @@
+{
+  "appDesc": {
+    "message": "Macht Tabs lauter (bis 6x) oder leiser und erhält Vollbild, wenn möglich. Merkt sich jeden Tab, mit Limiter, keine Datenerfassung."
+  },
+  "resetBtn": {
+    "message": "zurücksetzen"
+  },
+  "resetTitle": {
+    "message": "Auf 1× zurücksetzen (aus)"
+  },
+  "subCurrentTab": {
+    "message": "Aktueller Tab"
+  },
+  "subThisTab": {
+    "message": "dieser Tab"
+  },
+  "modeChecking": {
+    "message": "Wird geprüft…"
+  },
+  "scaleOff": {
+    "message": "1× aus"
+  },
+  "sliderAria": {
+    "message": "Lautstärke"
+  },
+  "limiterLabel": {
+    "message": "Limiter"
+  },
+  "limiterHint": {
+    "message": "Reduziert Verzerrungen bei starkem Boost"
+  },
+  "fsLabel": {
+    "message": "Vollbild bevorzugen"
+  },
+  "fsHint": {
+    "message": "Ohne Aufnahme – Vollbild bleibt, kein Boost"
+  },
+  "blockedText": {
+    "message": "Diese Seite kann nicht verstärkt werden. Browserseiten, der Web Store und andere Erweiterungen sind für die Audioaufnahme gesperrt. Öffne eine normale Website (z. B. YouTube) und versuch es erneut."
+  },
+  "modeElement": {
+    "message": "Vollbildmodus"
+  },
+  "modeElementTitle": {
+    "message": "Die Lautstärke wird direkt am Medienelement der Seite geregelt – Vollbild bleibt verfügbar."
+  },
+  "modePaused": {
+    "message": "Vollbild bleibt · pausiert"
+  },
+  "modePausedTitleConflict": {
+    "message": "Eine andere App nutzt gerade den Ton dieses Tabs. Der Boost ist pausiert, damit natives Vollbild weiter funktioniert."
+  },
+  "modePausedTitlePref": {
+    "message": "„Vollbild bevorzugen“ ist für diesen Tab aktiviert, daher wird die Lautstärke nicht per Aufnahme angewendet."
+  },
+  "pausedMsgConflict": {
+    "message": "Eine andere App nutzt bereits den Ton dieses Tabs. Der Boost ist pausiert, damit Vollbild weiter funktioniert – deaktiviere „Vollbild bevorzugen“, um stattdessen per Aufnahme zu verstärken (ohne Vollbild)."
+  },
+  "pausedMsgPref": {
+    "message": "„Vollbild bevorzugen“ ist für diesen Tab aktiviert, daher wird der Pegel nicht per Aufnahme angewendet. Deaktiviere die Option, um die Lautstärke auf dieser Seite anzupassen (während der Aufnahme ist kein Vollbild möglich)."
+  },
+  "modeCapture": {
+    "message": "Aufnahmemodus"
+  },
+  "modeCaptureConflict": {
+    "message": "Aufnahmemodus · Konflikt"
+  },
+  "modeCaptureTitle": {
+    "message": "Diese Quelle lässt sich nicht direkt ansteuern (DRM, Cross-Origin oder kein Element), daher wird die Tab-Aufnahme genutzt. Während des Boosts ist Vollbild deaktiviert – stelle 1.0× ein, um Vollbild zu nutzen."
+  },
+  "modeCaptureTitleConflict": {
+    "message": "Eine andere App nutzt den Ton dieses Tabs, daher wird per Aufnahme verstärkt. Während des Boosts ist Vollbild deaktiviert."
+  },
+  "captureMsgConflict": {
+    "message": "Eine andere App nutzt bereits den Ton dieses Tabs, daher wird per Aufnahme verstärkt – Vollbild ist nicht verfügbar. Aktiviere „Vollbild bevorzugen“, um stattdessen Vollbild zu behalten (ohne Boost)."
+  },
+  "modeNone": {
+    "message": "Kein Boost"
+  }
+}

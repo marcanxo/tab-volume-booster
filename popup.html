@@ -129,7 +129,7 @@
     font-family: var(--mono); font-size: 9.5px; color: #5a606b;
     margin: 8px 1px 0;
   }
-  .scale .u { color: #aeb4bf; }  /* unity (1× = off) marker — left of center on the 0–6 track */
+  .scale .u { color: #aeb4bf; }  /* unity (1× = off) marker - left of center on the 0–6 track */
 
   /* --- limiter row --- */
   .row {
@@ -182,38 +182,38 @@
   <header>
     <span class="dot" id="dot"></span>
     <span class="title">Volume Booster</span>
-    <button class="reset" id="reset" type="button" title="Reset to 1× (off)">reset</button>
+    <button class="reset" id="reset" type="button" title="Reset to 1× (off)" data-i18n="resetBtn" data-i18n-title="resetTitle">reset</button>
   </header>
 
   <div class="readout" id="readout">1.0<span class="x">×</span></div>
-  <div class="sub" id="sub">Current tab</div>
-  <div class="mode" id="mode" data-state="" title=""><span class="led"></span><span id="modeText">Checking…</span></div>
+  <div class="sub" id="sub" data-i18n="subCurrentTab">Current tab</div>
+  <div class="mode" id="mode" data-state="" title=""><span class="led"></span><span id="modeText" data-i18n="modeChecking">Checking…</span></div>
 
   <div class="controls">
-    <input class="slider" id="slider" type="range" min="0" max="1000" step="1" value="500" aria-label="Volume level" />
+    <input class="slider" id="slider" type="range" min="0" max="1000" step="1" value="500" aria-label="Volume level" data-i18n-aria="sliderAria" />
     <div class="scale">
-      <span>0×</span><span class="u">1× off</span><span>6×</span>
+      <span>0×</span><span class="u" data-i18n="scaleOff">1× off</span><span>6×</span>
     </div>
 
     <div class="row">
       <div>
-        <div class="label">Limiter</div>
-        <div class="hint">Tames distortion on hard boosts</div>
+        <div class="label" data-i18n="limiterLabel">Limiter</div>
+        <div class="hint" data-i18n="limiterHint">Tames distortion on hard boosts</div>
       </div>
-      <button class="toggle" id="limiter" role="switch" aria-checked="true" aria-label="Limiter"></button>
+      <button class="toggle" id="limiter" role="switch" aria-checked="true" aria-label="Limiter" data-i18n-aria="limiterLabel"></button>
     </div>
 
     <div class="row fsrow" id="fsRow">
       <div>
-        <div class="label">Prefer fullscreen</div>
-        <div class="hint">Skip capture — keep fullscreen, no boost</div>
+        <div class="label" data-i18n="fsLabel">Prefer fullscreen</div>
+        <div class="hint" data-i18n="fsHint">Skip capture - keep fullscreen, no boost</div>
       </div>
-      <button class="toggle" id="fsToggle" role="switch" aria-checked="false" aria-label="Prefer fullscreen"></button>
+      <button class="toggle" id="fsToggle" role="switch" aria-checked="false" aria-label="Prefer fullscreen" data-i18n-aria="fsLabel"></button>
     </div>
     <div class="notice" id="conflictMsg"></div>
   </div>
 
-  <div class="blocked">
+  <div class="blocked" data-i18n="blockedText">
     This page can't be boosted. Browser pages, the Web Store, and other extensions
     are off-limits to audio capture. Open a normal site (YouTube, etc.) and try again.
   </div>

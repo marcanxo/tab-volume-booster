@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 marcanxo
 //
-// background.js — service worker / orchestrator.
+// background.js - service worker / orchestrator.
 //
 // Per tab it decides between two boost paths and routes gain to the right one:
 //   element mode  → in-page content script hook (fullscreen PRESERVED)
@@ -24,8 +24,8 @@ const RESTORE_ATTEMPTS = 8;
 const RESTORE_DELAY_MS = 400;
 
 // "Off" = exactly unity (1.0×): no gain processing, so we release (and capture mode hands fullscreen
-// back). Any other level — boosting (>1) OR attenuating (<1, e.g. ducking a backing track under a
-// guitar) — engages the graph. TABGAIN is only ever stored at a non-unity level.
+// back). Any other level - boosting (>1) OR attenuating (<1, e.g. ducking a backing track under a
+// guitar) - engages the graph. TABGAIN is only ever stored at a non-unity level.
 const isUnity = (g) => Math.abs(g - 1) < 1e-6;
 const isActiveGain = (g) => typeof g === "number" && !isUnity(g);
 
@@ -56,7 +56,7 @@ async function ensureOffscreen() {
   return true;
 }
 // .catch: when no offscreen doc exists yet (e.g. a 'stop' for a never-captured tab, or on tab close),
-// this message has no receiver and rejects with "Receiving end does not exist" — harmless, so swallow it.
+// this message has no receiver and rejects with "Receiving end does not exist" - harmless, so swallow it.
 const toOffscreen = (m) => chrome.runtime.sendMessage({ target: "offscreen", ...m }).catch(() => {});
 
 // ---- content script ----
@@ -76,7 +76,7 @@ const pendingRekick = new Set(); // tabIds whose element was swapped mid-restore
 
 // ---- per-tab op queue: user actions (setGain / setFsPriority) run strictly in arrival order.
 // Without this, a quick slider wiggle (2.0× → 1.0×) runs two setGain calls CONCURRENTLY in the
-// worker, and the release can finish before the engage lands — leaving a live boost the popup
+// worker, and the release can finish before the engage lands - leaving a live boost the popup
 // says is off. Serializing per tab makes the last user action always win.
 const opChain = new Map(); // tabId -> tail promise
 function serialized(tabId, fn) {
@@ -98,7 +98,7 @@ async function predictMode(tabId) {
     const st = { tabId, cands: [] };
     probeWaiters.set(id, st);
     st.timer = setTimeout(() => {
-      probeWaiters.delete(id); // delete OUR entry only — never a concurrent probe's
+      probeWaiters.delete(id); // delete OUR entry only - never a concurrent probe's
       const best = pickBest(st.cands);
       resolve(best ? { mode: "element", frameId: best.frameId } : { mode: "capture" });
     }, 350);
@@ -152,7 +152,7 @@ async function applyCaptureOrPause(tabId, gain, useLimiter, conflict) {
   } catch (_) {
     // Couldn't capture (e.g. the activeTab grant was revoked by a reload, or another app holds the
     // tab). Don't leave a 'capture' mode pointing at a graph that doesn't exist, and don't tell the
-    // popup it's capturing — clear the mode and report 'none' so a later popup re-apply re-probes.
+    // popup it's capturing - clear the mode and report 'none' so a later popup re-apply re-probes.
     await clearMode(tabId);
     return { mode: "none", conflict: !!conflict, failed: true };
   }
@@ -171,7 +171,7 @@ async function setGain(tabId, gain, useLimiter) {
   if (info.mode === "element") {
     let res = await toFrame(tabId, info.frameId, { cmd: "engage", gain, useLimiter });
     if (res === null) {
-      // Delivery failure (frame gone / no receiver) — NOT a refusal. The player may live in a
+      // Delivery failure (frame gone / no receiver) - NOT a refusal. The player may live in a
       // fresh frame now (SPA replaced its iframe), so re-probe once before abandoning element mode.
       await clearMode(tabId);
       const fresh = await predictMode(tabId);
@@ -193,7 +193,7 @@ async function setGain(tabId, gain, useLimiter) {
 async function prepare(tabId) {
   const gain = (await sget(TABGAIN(tabId))) ?? 1;
   const fsPriority = (await sget(TABFS(tabId))) === true;
-  // If a reload-restore is in flight, don't launch a competing probe or commit a premature mode —
+  // If a reload-restore is in flight, don't launch a competing probe or commit a premature mode -
   // let the restore loop settle. Flag it so the popup skips its own re-apply (the loop handles it).
   if (restoring.has(tabId)) {
     const p = restoring.get(tabId);                   // stashed prior mode (or `true` very briefly)
@@ -201,7 +201,7 @@ async function prepare(tabId) {
     return { mode: pm ? pm.mode : "capture", conflict: !!(pm && pm.conflict), gain, fsPriority, restoring: true };
   }
   let info = await getMode(tabId);
-  // Display-only prediction — deliberately NOT persisted. A pre-load "capture" guess would stick
+  // Display-only prediction - deliberately NOT persisted. A pre-load "capture" guess would stick
   // in TABMODE and route a later boost straight to capture (fullscreen lost) even though the
   // player has long since attached a hookable element; setGain re-probes fresh instead.
   if (!info) info = await predictMode(tabId);
@@ -293,8 +293,8 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
 // storage.session survives, but until now nothing re-applied it until the popup was reopened (bug).
 // Platform realities baked in (verified against Chrome's docs):
 //   • Element mode becomes audible with NO click only where the autoplay policy lets a fresh
-//     AudioContext run — i.e. high-MEI origins like youtube.com. content.js refuses to hook a
-//     suspended context, so low-MEI sites just wait for the popup (same as before — no regression).
+//     AudioContext run - i.e. high-MEI origins like youtube.com. content.js refuses to hook a
+//     suspended context, so low-MEI sites just wait for the popup (same as before - no regression).
 //   • Capture mode can't be restarted here: a top-level reload revokes the activeTab-style capture
 //     grant, so getMediaStreamId throws. applyCaptureOrPause then clears the mode (rather than
 //     leaving a lie) and the stored level snaps back when the popup is reopened.
@@ -302,7 +302,7 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
 //     attempts instead of prematurely deciding "capture".
 async function restoreAfterLoad(tabId, gain, useLimiter, prior) {
   // A tab that was already CAPTURE/PAUSED (DRM, cross-origin, or a known conflict) won't become
-  // element-hookable just by waiting, and re-capturing after a reload usually fails anyway — so
+  // element-hookable just by waiting, and re-capturing after a reload usually fails anyway - so
   // don't grind the full loop for it; once there's no hookable element, apply once and stop.
   const priorCapture = !!(prior && (prior.mode === "capture" || prior.mode === "paused"));
   for (let i = 0; i < RESTORE_ATTEMPTS; i++) {
@@ -315,7 +315,7 @@ async function restoreAfterLoad(tabId, gain, useLimiter, prior) {
       await setMode(tabId, info);
       const res = await toFrame(tabId, info.frameId, { cmd: "engage", gain: g, useLimiter });
       if (res && res.ok) {
-        // Engage takes up to ~1.5s (probe + measure) — re-verify the user didn't release or
+        // Engage takes up to ~1.5s (probe + measure) - re-verify the user didn't release or
         // retarget the level meanwhile; the user's action must always win over the restore.
         const after = await sget(TABGAIN(tabId));
         if (!isActiveGain(after)) { await toFrame(tabId, info.frameId, { cmd: "stop" }); await clearMode(tabId); }
@@ -337,7 +337,7 @@ async function restoreAfterLoad(tabId, gain, useLimiter, prior) {
     await new Promise((r) => setTimeout(r, RESTORE_DELAY_MS));
   }
   // Exhausted and the tab was ELEMENT before (or had no prior): the player never re-attached a
-  // hookable element in time. Do NOT force capture — that would disable native fullscreen on a tab
+  // hookable element in time. Do NOT force capture - that would disable native fullscreen on a tab
   // that was fullscreen-friendly. Leave the boost level stored but the mode cleared, so reopening
   // the popup re-probes (and the user can opt into capture there if they actually want it).
   await clearMode(tabId);
@@ -350,7 +350,7 @@ async function kickRestore(tabId, deferIfBusy) {
   if (!isActiveGain(gain)) return;         // only tabs at a non-unity level (boosted or attenuated)
   if (restoring.has(tabId)) {              // a restore is already running for this tab…
     if (deferIfBusy) pendingRekick.add(tabId); // …a swap still needs one more pass afterwards
-    return;                                // (has-check + set below are ADJACENT — no await between)
+    return;                                // (has-check + set below are ADJACENT - no await between)
   }
   restoring.set(tabId, true);
   try {
@@ -367,7 +367,7 @@ async function kickRestore(tabId, deferIfBusy) {
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   // status 'complete' = full load finished. changeInfo.url alone = SPA route change
-  // (history.pushState) — those never reach 'complete' again, but players swap on them.
+  // (history.pushState) - those never reach 'complete' again, but players swap on them.
   if (changeInfo.status !== "complete" && typeof changeInfo.url !== "string") return;
   if (!tab || !tab.url || !/^https?:/.test(tab.url)) return;  // skip chrome:// / store / etc.
   kickRestore(tabId, true); // defer-if-busy: a signal arriving mid-restore queues one more pass

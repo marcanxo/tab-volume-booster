@@ -1,0 +1,80 @@
+{
+  "appDesc": {
+    "message": "Zwiększaj głośność karty (do 6x) lub ją wyciszaj - pełny ekran, gdy to możliwe. Pamięta poziomy kart, ma limiter, nie zbiera danych."
+  },
+  "resetBtn": {
+    "message": "resetuj"
+  },
+  "resetTitle": {
+    "message": "Resetuj do 1× (wył.)"
+  },
+  "subCurrentTab": {
+    "message": "Bieżąca karta"
+  },
+  "subThisTab": {
+    "message": "ta karta"
+  },
+  "modeChecking": {
+    "message": "Sprawdzanie…"
+  },
+  "scaleOff": {
+    "message": "1× wył."
+  },
+  "sliderAria": {
+    "message": "Poziom głośności"
+  },
+  "limiterLabel": {
+    "message": "Limiter"
+  },
+  "limiterHint": {
+    "message": "Redukuje zniekształcenia przy mocnym wzmocnieniu"
+  },
+  "fsLabel": {
+    "message": "Preferuj pełny ekran"
+  },
+  "fsHint": {
+    "message": "Pomija przechwytywanie - zachowuje pełny ekran, bez wzmocnienia"
+  },
+  "blockedText": {
+    "message": "Tej strony nie da się wzmocnić. Strony przeglądarki, Chrome Web Store i inne rozszerzenia nie pozwalają na przechwytywanie dźwięku. Otwórz zwykłą stronę (np. YouTube) i spróbuj ponownie."
+  },
+  "modeElement": {
+    "message": "Tryb pełnoekranowy"
+  },
+  "modeElementTitle": {
+    "message": "Głośność jest regulowana bezpośrednio w elemencie multimedialnym strony - pełny ekran pozostaje dostępny."
+  },
+  "modePaused": {
+    "message": "Pełny ekran · pauza wzmocnienia"
+  },
+  "modePausedTitleConflict": {
+    "message": "Inna aplikacja korzysta z dźwięku tej karty. Wzmocnienie wstrzymano, aby natywny pełny ekran nadal działał."
+  },
+  "modePausedTitlePref": {
+    "message": "Opcja „Preferuj pełny ekran” jest włączona dla tej karty, więc poziom głośności nie jest stosowany przez przechwytywanie."
+  },
+  "pausedMsgConflict": {
+    "message": "Inna aplikacja już korzysta z dźwięku tej karty. Wzmocnienie wstrzymano, aby pełny ekran nadal działał - wyłącz „Preferuj pełny ekran”, aby wzmacniać przez przechwytywanie (bez pełnego ekranu)."
+  },
+  "pausedMsgPref": {
+    "message": "Opcja „Preferuj pełny ekran” jest włączona dla tej karty, więc poziom nie jest stosowany przez przechwytywanie. Wyłącz ją, aby regulować głośność na tej stronie (pełny ekran jest niedostępny podczas przechwytywania)."
+  },
+  "modeCapture": {
+    "message": "Tryb przechwytywania"
+  },
+  "modeCaptureConflict": {
+    "message": "Przechwytywanie · konflikt"
+  },
+  "modeCaptureTitle": {
+    "message": "Tego źródła nie da się podpiąć bezpośrednio (DRM, inna domena lub brak elementu), więc używane jest przechwytywanie karty. Podczas wzmocnienia pełny ekran jest wyłączony - zejdź do 1.0×, aby go włączyć."
+  },
+  "modeCaptureTitleConflict": {
+    "message": "Inna aplikacja korzysta z dźwięku tej karty, więc wzmocnienie działa przez przechwytywanie. Podczas wzmocnienia pełny ekran jest wyłączony."
+  },
+  "captureMsgConflict": {
+    "message": "Inna aplikacja już korzysta z dźwięku tej karty, więc wzmocnienie działa przez przechwytywanie - pełny ekran jest niedostępny. Włącz „Preferuj pełny ekran”, aby zachować pełny ekran (bez wzmocnienia)."
+  },
+  "modeNone": {
+    "message": "Bez wzmocnienia"
+  }
+}

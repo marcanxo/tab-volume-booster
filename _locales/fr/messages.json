@@ -1,0 +1,80 @@
+{
+  "appDesc": {
+    "message": "Montez ou baissez le son d'un onglet (6x max), plein écran gardé si possible. Mémoire par onglet, limiteur, aucune donnée collectée."
+  },
+  "resetBtn": {
+    "message": "réinit."
+  },
+  "resetTitle": {
+    "message": "Réinitialiser à 1× (désactivé)"
+  },
+  "subCurrentTab": {
+    "message": "Onglet actuel"
+  },
+  "subThisTab": {
+    "message": "cet onglet"
+  },
+  "modeChecking": {
+    "message": "Vérification…"
+  },
+  "scaleOff": {
+    "message": "1× désactivé"
+  },
+  "sliderAria": {
+    "message": "Niveau de volume"
+  },
+  "limiterLabel": {
+    "message": "Limiteur"
+  },
+  "limiterHint": {
+    "message": "Atténue la distorsion en cas de boost élevé"
+  },
+  "fsLabel": {
+    "message": "Priorité au plein écran"
+  },
+  "fsHint": {
+    "message": "Évite la capture - plein écran conservé, sans boost"
+  },
+  "blockedText": {
+    "message": "Impossible de booster cette page. La capture audio est bloquée sur les pages du navigateur, le Web Store et les autres extensions. Ouvrez un site classique (YouTube, etc.) et réessayez."
+  },
+  "modeElement": {
+    "message": "Mode plein écran"
+  },
+  "modeElementTitle": {
+    "message": "Le volume est réglé directement sur le lecteur média de la page - le plein écran reste disponible."
+  },
+  "modePaused": {
+    "message": "Plein écran · boost en pause"
+  },
+  "modePausedTitleConflict": {
+    "message": "Une autre application utilise l'audio de cet onglet. Le boost est en pause pour que le plein écran natif continue de fonctionner."
+  },
+  "modePausedTitlePref": {
+    "message": "L'option « Priorité au plein écran » est activée pour cet onglet : le niveau de volume n'est donc pas appliqué via la capture."
+  },
+  "pausedMsgConflict": {
+    "message": "Une autre application utilise déjà l'audio de cet onglet. Le boost est en pause pour préserver le plein écran - désactivez « Priorité au plein écran » pour booster via la capture (plein écran désactivé)."
+  },
+  "pausedMsgPref": {
+    "message": "L'option « Priorité au plein écran » est activée pour cet onglet : le niveau n'est donc pas appliqué via la capture. Désactivez-la pour régler le volume de cette page (le plein écran est indisponible pendant la capture)."
+  },
+  "modeCapture": {
+    "message": "Mode capture"
+  },
+  "modeCaptureConflict": {
+    "message": "Mode capture · conflit"
+  },
+  "modeCaptureTitle": {
+    "message": "Cette source ne peut pas être contrôlée directement (DRM, origine différente ou aucun élément) : la capture d'onglet est donc utilisée. Le plein écran est désactivé pendant le boost ; repassez à 1.0× pour le réactiver."
+  },
+  "modeCaptureTitleConflict": {
+    "message": "Une autre application utilise l'audio de cet onglet : le boost passe donc par la capture. Le plein écran est désactivé pendant le boost."
+  },
+  "captureMsgConflict": {
+    "message": "Une autre application utilise déjà l'audio de cet onglet : le boost passe donc par la capture et le plein écran est indisponible. Activez « Priorité au plein écran » pour conserver le plein écran (sans boost)."
+  },
+  "modeNone": {
+    "message": "Aucun boost"
+  }
+}

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 marcanxo
 //
-// offscreen.js — the audio engine.
+// offscreen.js - the audio engine.
 //
 // Per boosted tab:   MediaStreamSource → GainNode → [DynamicsCompressor limiter] → destination
 // The final connect to destination is what keeps the tab audible (capture would
@@ -13,7 +13,7 @@
 
 // tabId -> live graph { ctx, source, gain, limiter, stream }
 //        | pending entry { pending:true, latest:{gain,useLimiter}, cancelled } while getUserMedia
-//          is in flight — so a 'stop' or 'update' arriving mid-start cancels/retargets it instead
+//          is in flight - so a 'stop' or 'update' arriving mid-start cancels/retargets it instead
 //          of being silently dropped (which used to leave an orphaned live capture).
 const graphs = new Map();
 
@@ -29,7 +29,7 @@ function makeLimiter(ctx) {
 
 // Toggle the limiter by RAMPING its ratio (20:1 on → 1:1 off) instead of disconnecting nodes.
 // ratio 1 → slope 1 → identity transfer (level/frequency-transparent); a DynamicsCompressor keeps a
-// fixed ~6ms pre-delay even when bypassed (imperceptible — the price of click-free toggling). The
+// fixed ~6ms pre-delay even when bypassed (imperceptible - the price of click-free toggling). The
 // limiter stays wired in (source→gain→limiter→destination) at all times.
 function applyLimiter(graph, on, immediate) {
   const t = graph.ctx.currentTime;
@@ -62,7 +62,7 @@ async function start(tabId, streamId, gain, useLimiter) {
     });
   } catch (err) {
     console.error("tab capture failed for tab", tabId, err);
-    // Only report if WE are still the active attempt — a superseded/cancelled start's failure
+    // Only report if WE are still the active attempt - a superseded/cancelled start's failure
     // must not clobber the bookkeeping of a newer start/graph that replaced it.
     if (graphs.get(tabId) === entry) {
       graphs.delete(tabId);
@@ -81,11 +81,11 @@ async function start(tabId, streamId, gain, useLimiter) {
   const ctx = new AudioContext();
   const source = ctx.createMediaStreamSource(stream);
   const gainNode = ctx.createGain();
-  gainNode.gain.value = entry.latest.gain;   // freshest values — an 'update' may have retargeted us
+  gainNode.gain.value = entry.latest.gain;   // freshest values - an 'update' may have retargeted us
   const limiter = makeLimiter(ctx);
 
   const graph = { ctx, source, gain: gainNode, limiter, stream };
-  // Static graph — limiter always in the path; toggled by ramping its ratio, never by rewiring.
+  // Static graph - limiter always in the path; toggled by ramping its ratio, never by rewiring.
   source.connect(gainNode);
   gainNode.connect(limiter);
   limiter.connect(ctx.destination);

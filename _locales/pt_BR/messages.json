@@ -1,0 +1,80 @@
+{
+  "appDesc": {
+    "message": "Aumente (até 6x) ou reduza o volume da aba, mantendo a tela cheia quando possível. Memória por aba, limitador, sem coleta de dados."
+  },
+  "resetBtn": {
+    "message": "redefinir"
+  },
+  "resetTitle": {
+    "message": "Redefinir para 1× (desligado)"
+  },
+  "subCurrentTab": {
+    "message": "Aba atual"
+  },
+  "subThisTab": {
+    "message": "esta aba"
+  },
+  "modeChecking": {
+    "message": "Verificando…"
+  },
+  "scaleOff": {
+    "message": "1× desligado"
+  },
+  "sliderAria": {
+    "message": "Nível de volume"
+  },
+  "limiterLabel": {
+    "message": "Limitador"
+  },
+  "limiterHint": {
+    "message": "Reduz a distorção em aumentos fortes"
+  },
+  "fsLabel": {
+    "message": "Priorizar tela cheia"
+  },
+  "fsHint": {
+    "message": "Sem captura - mantém a tela cheia, sem aumento"
+  },
+  "blockedText": {
+    "message": "Não é possível aumentar o volume desta página. Páginas do navegador, a Web Store e outras extensões não permitem captura de áudio. Abra um site comum (YouTube etc.) e tente novamente."
+  },
+  "modeElement": {
+    "message": "Modo tela cheia"
+  },
+  "modeElementTitle": {
+    "message": "Ajustando o elemento de mídia da própria página - a tela cheia continua disponível."
+  },
+  "modePaused": {
+    "message": "Tela cheia mantida · pausado"
+  },
+  "modePausedTitleConflict": {
+    "message": "Outro app está usando o áudio desta aba. O aumento fica pausado para que a tela cheia nativa continue funcionando."
+  },
+  "modePausedTitlePref": {
+    "message": "“Priorizar tela cheia” está ativado nesta aba, então o nível de volume não é aplicado via captura."
+  },
+  "pausedMsgConflict": {
+    "message": "Outro app já está usando o áudio desta aba. O aumento fica pausado para manter a tela cheia funcionando - desative “Priorizar tela cheia” para aumentar via captura (sem tela cheia)."
+  },
+  "pausedMsgPref": {
+    "message": "“Priorizar tela cheia” está ativado nesta aba, então o nível não é aplicado via captura. Desative para ajustar o volume nesta página (a tela cheia fica indisponível durante a captura)."
+  },
+  "modeCapture": {
+    "message": "Modo captura"
+  },
+  "modeCaptureConflict": {
+    "message": "Modo captura · conflito"
+  },
+  "modeCaptureTitle": {
+    "message": "Esta fonte não pode ser ajustada diretamente (DRM, outra origem ou sem elemento de mídia), por isso a captura da aba é usada. A tela cheia fica desativada durante o aumento; volte para 1.0× para usar a tela cheia."
+  },
+  "modeCaptureTitleConflict": {
+    "message": "Outro app está usando o áudio desta aba, então o aumento é feito via captura. A tela cheia fica desativada durante o aumento."
+  },
+  "captureMsgConflict": {
+    "message": "Outro app já está usando o áudio desta aba, então o aumento é feito via captura - a tela cheia fica indisponível. Ative “Priorizar tela cheia” para manter a tela cheia (sem aumento)."
+  },
+  "modeNone": {
+    "message": "Sem aumento"
+  }
+}

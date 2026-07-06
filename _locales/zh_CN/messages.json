@@ -1,0 +1,80 @@
+{
+  "appDesc": {
+    "message": "让任意标签页的声音更大（最高 6x）或更小，并尽量保持全屏可用。按标签页记忆设置，内置限制器，不收集任何数据。"
+  },
+  "resetBtn": {
+    "message": "重置"
+  },
+  "resetTitle": {
+    "message": "重置为 1×（关闭）"
+  },
+  "subCurrentTab": {
+    "message": "当前标签页"
+  },
+  "subThisTab": {
+    "message": "此标签页"
+  },
+  "modeChecking": {
+    "message": "检测中…"
+  },
+  "scaleOff": {
+    "message": "1× 关闭"
+  },
+  "sliderAria": {
+    "message": "音量大小"
+  },
+  "limiterLabel": {
+    "message": "限制器"
+  },
+  "limiterHint": {
+    "message": "抑制大幅增强时的失真"
+  },
+  "fsLabel": {
+    "message": "优先全屏"
+  },
+  "fsHint": {
+    "message": "跳过捕获，保留全屏，但不增强"
+  },
+  "blockedText": {
+    "message": "无法增强此页面的音量。浏览器页面、Chrome 网上应用店和其他扩展程序均不允许音频捕获。请打开普通网站（如 YouTube）后重试。"
+  },
+  "modeElement": {
+    "message": "全屏模式"
+  },
+  "modeElementTitle": {
+    "message": "直接调节页面自身的媒体元素，全屏功能保持可用。"
+  },
+  "modePaused": {
+    "message": "保留全屏 · 增强已暂停"
+  },
+  "modePausedTitleConflict": {
+    "message": "另一个应用正在使用此标签页的音频。增强已暂停，以保证原生全屏正常工作。"
+  },
+  "modePausedTitlePref": {
+    "message": "此标签页已开启“优先全屏”，因此音量设置不会通过捕获生效。"
+  },
+  "pausedMsgConflict": {
+    "message": "另一个应用已在使用此标签页的音频。增强已暂停，以保证全屏正常工作，关闭“优先全屏”可改为通过捕获增强（全屏将不可用）。"
+  },
+  "pausedMsgPref": {
+    "message": "此标签页已开启“优先全屏”，因此音量设置不会通过捕获生效。将其关闭后即可调节此页面的音量（捕获期间全屏不可用）。"
+  },
+  "modeCapture": {
+    "message": "捕获模式"
+  },
+  "modeCaptureConflict": {
+    "message": "捕获模式 · 冲突"
+  },
+  "modeCaptureTitle": {
+    "message": "无法直接接入此音频源（DRM、跨域或无媒体元素），因此使用标签页捕获。增强期间全屏被禁用；调回 1.0× 即可使用全屏。"
+  },
+  "modeCaptureTitleConflict": {
+    "message": "另一个应用正在使用此标签页的音频，因此通过捕获进行增强。增强期间全屏被禁用。"
+  },
+  "captureMsgConflict": {
+    "message": "另一个应用已在使用此标签页的音频，因此正通过捕获进行增强，全屏不可用。开启“优先全屏”可改为保留全屏（但不增强）。"
+  },
+  "modeNone": {
+    "message": "未增强"
+  }
+}

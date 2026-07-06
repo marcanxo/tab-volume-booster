@@ -1,0 +1,80 @@
+{
+  "appDesc": {
+    "message": "탭 소리를 최대 6x까지 키우거나 줄이고, 가능하면 전체 화면을 유지합니다. 탭별 설정 기억, 내장 리미터, 데이터 수집 없음."
+  },
+  "resetBtn": {
+    "message": "초기화"
+  },
+  "resetTitle": {
+    "message": "1×(꺼짐) 상태로 초기화"
+  },
+  "subCurrentTab": {
+    "message": "현재 탭"
+  },
+  "subThisTab": {
+    "message": "이 탭"
+  },
+  "modeChecking": {
+    "message": "확인 중…"
+  },
+  "scaleOff": {
+    "message": "1× 꺼짐"
+  },
+  "sliderAria": {
+    "message": "볼륨 레벨"
+  },
+  "limiterLabel": {
+    "message": "리미터"
+  },
+  "limiterHint": {
+    "message": "강한 부스트 시 소리 왜곡을 줄여 줍니다"
+  },
+  "fsLabel": {
+    "message": "전체 화면 우선"
+  },
+  "fsHint": {
+    "message": "캡처 건너뛰기 - 전체 화면 유지, 부스트 없음"
+  },
+  "blockedText": {
+    "message": "이 페이지는 부스트할 수 없습니다. 브라우저 페이지, Chrome 웹 스토어, 다른 확장 프로그램에서는 오디오 캡처가 허용되지 않습니다. 일반 사이트(YouTube 등)를 열고 다시 시도하세요."
+  },
+  "modeElement": {
+    "message": "전체 화면 모드"
+  },
+  "modeElementTitle": {
+    "message": "페이지의 미디어 요소를 직접 조절하므로 전체 화면을 계속 사용할 수 있습니다."
+  },
+  "modePaused": {
+    "message": "전체 화면 유지 · 부스트 일시 중지"
+  },
+  "modePausedTitleConflict": {
+    "message": "다른 앱이 이 탭의 오디오를 사용 중입니다. 전체 화면이 계속 작동하도록 부스트를 일시 중지했습니다."
+  },
+  "modePausedTitlePref": {
+    "message": "이 탭에서 “전체 화면 우선”이 켜져 있어 볼륨이 캡처로 적용되지 않습니다."
+  },
+  "pausedMsgConflict": {
+    "message": "다른 앱이 이미 이 탭의 오디오를 사용 중입니다. 전체 화면이 계속 작동하도록 부스트를 일시 중지했습니다. 대신 캡처로 부스트하려면 “전체 화면 우선”을 끄세요(이 경우 전체 화면은 사용할 수 없습니다)."
+  },
+  "pausedMsgPref": {
+    "message": "이 탭에서 “전체 화면 우선”이 켜져 있어 볼륨이 캡처로 적용되지 않습니다. 이 페이지에서 볼륨을 조절하려면 해당 옵션을 끄세요(캡처 중에는 전체 화면을 사용할 수 없습니다)."
+  },
+  "modeCapture": {
+    "message": "캡처 모드"
+  },
+  "modeCaptureConflict": {
+    "message": "캡처 모드 · 충돌"
+  },
+  "modeCaptureTitle": {
+    "message": "이 소스는 직접 연결할 수 없어(DRM, 교차 출처 또는 미디어 요소 없음) 탭 캡처를 사용합니다. 부스트 중에는 전체 화면이 비활성화되며, 1.0×로 낮추면 전체 화면을 사용할 수 있습니다."
+  },
+  "modeCaptureTitleConflict": {
+    "message": "다른 앱이 이 탭의 오디오를 사용 중이어서 캡처로 부스트하고 있습니다. 부스트 중에는 전체 화면이 비활성화됩니다."
+  },
+  "captureMsgConflict": {
+    "message": "다른 앱이 이미 이 탭의 오디오를 사용 중이어서 캡처로 부스트하고 있으며, 전체 화면은 사용할 수 없습니다. 전체 화면을 유지하려면 “전체 화면 우선”을 켜세요(부스트 없음)."
+  },
+  "modeNone": {
+    "message": "부스트 꺼짐"
+  }
+}

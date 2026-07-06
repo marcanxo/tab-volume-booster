@@ -1,0 +1,106 @@
+{
+  "appDesc": {
+    "message": "Make any tab louder (up to 6x) or quieter, keeping fullscreen when possible. Per-tab memory, built-in limiter, no data collected.",
+    "description": "Store / extension-manager description. HARD LIMIT: 132 characters."
+  },
+  "resetBtn": {
+    "message": "reset",
+    "description": "Tiny header button that snaps the level back to 1× (off). Keep it very short."
+  },
+  "resetTitle": {
+    "message": "Reset to 1× (off)",
+    "description": "Tooltip of the reset button."
+  },
+  "subCurrentTab": {
+    "message": "Current tab",
+    "description": "Subtitle placeholder shown before the tab's site is known."
+  },
+  "subThisTab": {
+    "message": "this tab",
+    "description": "Appended after the site's hostname, e.g. “youtube.com · this tab”."
+  },
+  "modeChecking": {
+    "message": "Checking…",
+    "description": "Status pill while the extension probes the page."
+  },
+  "scaleOff": {
+    "message": "1× off",
+    "description": "Center label of the slider scale: 1× = no change (off). Keep “1×”."
+  },
+  "sliderAria": {
+    "message": "Volume level",
+    "description": "Screen-reader label of the slider."
+  },
+  "limiterLabel": {
+    "message": "Limiter",
+    "description": "Label of the limiter toggle."
+  },
+  "limiterHint": {
+    "message": "Tames distortion on hard boosts",
+    "description": "One-line hint under the Limiter label."
+  },
+  "fsLabel": {
+    "message": "Prefer fullscreen",
+    "description": "Per-tab toggle: keep native fullscreen instead of boosting via capture. This name is quoted verbatim inside pausedMsgConflict / pausedMsgPref / captureMsgConflict - keep them identical."
+  },
+  "fsHint": {
+    "message": "Skip capture - keep fullscreen, no boost",
+    "description": "One-line hint under the Prefer-fullscreen label."
+  },
+  "blockedText": {
+    "message": "This page can't be boosted. Browser pages, the Web Store, and other extensions are off-limits to audio capture. Open a normal site (YouTube, etc.) and try again.",
+    "description": "Shown on pages the extension cannot work on (chrome:// pages, the Web Store)."
+  },
+  "modeElement": {
+    "message": "Fullscreen mode",
+    "description": "Green status pill: adjusting the page's own media element; native fullscreen keeps working. Keep short - the popup is only 268px wide."
+  },
+  "modeElementTitle": {
+    "message": "Adjusting the page's own media element in-page - fullscreen stays available.",
+    "description": "Tooltip of the Fullscreen-mode pill."
+  },
+  "modePaused": {
+    "message": "Fullscreen kept · boost paused",
+    "description": "Status pill when the user chose fullscreen over boosting. Keep short; keep the “ · ” separator."
+  },
+  "modePausedTitleConflict": {
+    "message": "Another app is using this tab's audio. Boost is paused so native fullscreen keeps working.",
+    "description": "Tooltip of the paused pill when another app controls the tab's audio."
+  },
+  "modePausedTitlePref": {
+    "message": "“Prefer fullscreen” is on for this tab, so the volume level isn't applied via capture.",
+    "description": "Tooltip of the paused pill when the user's own toggle causes the pause. Quotes the fsLabel name."
+  },
+  "pausedMsgConflict": {
+    "message": "Another app is already using this tab's audio. Boost is paused so fullscreen keeps working - turn off “Prefer fullscreen” to boost via capture instead (fullscreen off).",
+    "description": "Explanation box in the paused+conflict state. Quotes the fsLabel name."
+  },
+  "pausedMsgPref": {
+    "message": "“Prefer fullscreen” is on for this tab, so the level isn't applied via capture. Turn it off to adjust the volume on this page (fullscreen is unavailable while capturing).",
+    "description": "Explanation box in the paused state without a conflict. Quotes the fsLabel name."
+  },
+  "modeCapture": {
+    "message": "Capture mode",
+    "description": "Amber status pill: boosting via tab capture (fullscreen disabled while boosted). Keep short."
+  },
+  "modeCaptureConflict": {
+    "message": "Capture mode · conflict",
+    "description": "Capture pill when another app also uses the tab's audio. Keep short; keep the “ · ” separator."
+  },
+  "modeCaptureTitle": {
+    "message": "This source can't be hooked directly (DRM, cross-origin, or no element), so tab capture is used. Fullscreen is disabled while boosted; drop to 1.0× to fullscreen.",
+    "description": "Tooltip of the capture pill (normal case)."
+  },
+  "modeCaptureTitleConflict": {
+    "message": "Another app is using this tab's audio, so it's boosting via capture. Fullscreen is disabled while boosted.",
+    "description": "Tooltip of the capture pill on a conflict."
+  },
+  "captureMsgConflict": {
+    "message": "Another app is already using this tab's audio, so it's boosting via capture - fullscreen is unavailable. Turn on “Prefer fullscreen” to keep fullscreen instead (no boost).",
+    "description": "Explanation box in the capture+conflict state. Quotes the fsLabel name."
+  },
+  "modeNone": {
+    "message": "Not boosting",
+    "description": "Neutral status pill at 1× (off). Keep short."
+  }
+}

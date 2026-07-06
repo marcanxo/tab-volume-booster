@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 marcanxo
 //
-// content.js — runs INSIDE the page (and each frame). The fullscreen-preserving path.
+// content.js - runs INSIDE the page (and each frame). The fullscreen-preserving path.
 //
 // It hooks the page's own media element via createMediaElementSource and routes it
 // through gain → [limiter] → analyser → destination. No tabCapture is used, so Chrome
 // never flags the tab as captured and the Fullscreen API stays available.
 //
-// SAFETY: createMediaElementSource is one-shot and destructive — hooking a CORS-tainted
+// SAFETY: createMediaElementSource is one-shot and destructive - hooking a CORS-tainted
 // element silences it permanently (until reload). So we NEVER hook unless a non-destructive
 // pre-check passes (same-origin / blob / CORS-enabled / not DRM) AND the AudioContext is
 // actually running. The analyser only *confirms* audio for display; it never decides.
@@ -68,7 +68,7 @@
   // Toggle the limiter by RAMPING its compression ratio (20:1 on → 1:1 off) rather than disconnecting
   // nodes. ratio 1 → slope 1/ratio = 1 → the compressor is an identity transfer (no gain change, flat
   // response): level/frequency-transparent. (Caveat: a DynamicsCompressor keeps a fixed ~6ms pre-delay
-  // even when bypassed — imperceptible, and the price of click-free toggling, since an AudioParam ramp
+  // even when bypassed - imperceptible, and the price of click-free toggling, since an AudioParam ramp
   // is smooth where a disconnect/reconnect pops.) The limiter stays wired into the graph at all times.
   function applyLimiter(on, immediate) {
     if (!S.ctx || !S.limiter) return;
@@ -107,7 +107,7 @@
 
   // Fully release our graph so a later engage() will hook a FRESH element instead of no-opping on
   // the dead one. Used when the player swaps its <video> out from under us. Safe to close the
-  // context here because the old element is gone — nothing audible is routed through it anymore.
+  // context here because the old element is gone - nothing audible is routed through it anymore.
   function teardown() {
     try { if (S.mo) S.mo.disconnect(); } catch (_) {}
     try { S.src && S.src.disconnect(); } catch (_) {}
@@ -124,10 +124,10 @@
     let pending = false;
     S.mo = new MutationObserver(() => {
       // el.isConnected (not document.contains): an element re-parented INTO a shadow root is still
-      // live and audible, but document.contains() reports false for it — tearing down then would
+      // live and audible, but document.contains() reports false for it - tearing down then would
       // close the ctx and permanently silence it (the hook is one-shot).
       if (pending || el.isConnected) return;
-      // The element left the DOM — but a player may be DETACHING then RE-ATTACHING the same node
+      // The element left the DOM - but a player may be DETACHING then RE-ATTACHING the same node
       // (SPA reconciliation, theater/fullscreen re-parenting). Closing the context now would
       // permanently silence a same-node re-attach (createMediaElementSource is one-shot), so wait
       // a turn and only act if it's really gone.
@@ -146,7 +146,7 @@
 
   // --- same-tab transition detection --------------------------------------
   // "Next episode" on many streaming sites swaps the player <iframe> (or its src)
-  // WITHOUT a page load and WITHOUT removing anything from the hooked frame's DOM —
+  // WITHOUT a page load and WITHOUT removing anything from the hooked frame's DOM -
   // so neither the reload restore nor the elementLost watcher fires, and the boost
   // silently resets to native 1× while the stored level still says otherwise.
   // Every frame watches its own subtree for media/iframe swaps and nudges the
@@ -160,7 +160,7 @@
   }
 
   // One-shot: when engage() refused because the AudioContext couldn't run (autoplay
-  // policy — fresh frame with no user activation yet), retry after the first gesture
+  // policy - fresh frame with no user activation yet), retry after the first gesture
   // in this frame. Activation is per-frame, so this is the earliest it can succeed.
   let gestureArmed = false;
   function armGestureRetry() {
@@ -198,7 +198,7 @@
     childList: true, subtree: true, attributes: true, attributeFilter: ["src"]
   });
   // SPA route changes that fire DOM-visible events. (history.pushState is invisible
-  // from this isolated world — the worker catches those via tabs.onUpdated url changes.)
+  // from this isolated world - the worker catches those via tabs.onUpdated url changes.)
   window.addEventListener("popstate", pingNavigated);
   window.addEventListener("hashchange", pingNavigated);
 
@@ -222,7 +222,7 @@
     try { ctx = new (window.AudioContext || window.webkitAudioContext)(); }
     catch { return { ok: false, reason: "no-audiocontext" }; }
 
-    // Confirm the context can actually RUN before hooking — hooking into a suspended
+    // Confirm the context can actually RUN before hooking - hooking into a suspended
     // context would silence the element. If it won't run, bail (nothing hooked yet).
     try { await ctx.resume(); } catch (_) {}
     if (ctx.state !== "running") await new Promise((r) => setTimeout(r, 150));
@@ -240,7 +240,7 @@
     S.gain = ctx.createGain(); S.gain.gain.value = gain;
     S.limiter = makeLimiter(ctx);
     S.analyser = ctx.createAnalyser(); S.analyser.fftSize = 256;
-    // Static graph — the limiter is ALWAYS in the path (src→gain→limiter→analyser→destination);
+    // Static graph - the limiter is ALWAYS in the path (src→gain→limiter→analyser→destination);
     // it's toggled by ramping its ratio, never by rewiring, so toggling can't click.
     S.src.connect(S.gain);
     S.gain.connect(S.limiter);
@@ -254,7 +254,7 @@
     return { ok: true, engaged: true, signal: m.signal };
   }
 
-  // 1.0× / off: ramp to a unity passthrough — gain 1 and the limiter bypassed (ratio 1), so it's
+  // 1.0× / off: ramp to a unity passthrough - gain 1 and the limiter bypassed (ratio 1), so it's
   // level/frequency-transparent (a constant ~6ms compressor pre-delay remains, but it's imperceptible).
   // createMediaElementSource can't be un-hooked, and closing the context would silence the rerouted
   // element, so we keep the context open at unity. Ramping (not disconnecting) → no click on release.
@@ -292,7 +292,7 @@
     }
 
     if (msg.cmd === "engage") {
-      // The .catch guarantees a response even if engage throws — otherwise the worker's await
+      // The .catch guarantees a response even if engage throws - otherwise the worker's await
       // would hang forever (it holds the 'restoring' lock during reload-restores).
       engage(msg.gain, msg.useLimiter)
         .then(sendResponse)

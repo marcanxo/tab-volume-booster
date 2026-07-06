@@ -1,0 +1,80 @@
+{
+  "appDesc": {
+    "message": "タブの音量を最大6xまでブースト、またはミュートまで下げられます。可能な限り全画面表示を維持。タブごとに設定を記憶、リミッター内蔵、データ収集なし。"
+  },
+  "resetBtn": {
+    "message": "リセット"
+  },
+  "resetTitle": {
+    "message": "1×（オフ）にリセット"
+  },
+  "subCurrentTab": {
+    "message": "現在のタブ"
+  },
+  "subThisTab": {
+    "message": "このタブ"
+  },
+  "modeChecking": {
+    "message": "確認中…"
+  },
+  "scaleOff": {
+    "message": "1× オフ"
+  },
+  "sliderAria": {
+    "message": "音量レベル"
+  },
+  "limiterLabel": {
+    "message": "リミッター"
+  },
+  "limiterHint": {
+    "message": "強いブースト時の音割れを抑えます"
+  },
+  "fsLabel": {
+    "message": "全画面を優先"
+  },
+  "fsHint": {
+    "message": "キャプチャを使わず全画面を維持（ブーストなし）"
+  },
+  "blockedText": {
+    "message": "このページではブーストできません。ブラウザの設定ページ、Chrome ウェブストア、他の拡張機能のページでは音声キャプチャを利用できません。YouTube などの通常のサイトを開いて、もう一度お試しください。"
+  },
+  "modeElement": {
+    "message": "全画面モード"
+  },
+  "modeElementTitle": {
+    "message": "ページ内のメディア要素を直接調整しているため、全画面表示はそのまま利用できます。"
+  },
+  "modePaused": {
+    "message": "全画面を維持 · ブースト停止"
+  },
+  "modePausedTitleConflict": {
+    "message": "別のアプリがこのタブの音声を使用中です。ネイティブの全画面表示を維持するため、ブーストを一時停止しています。"
+  },
+  "modePausedTitlePref": {
+    "message": "このタブでは「全画面を優先」がオンのため、キャプチャによる音量調整は適用されません。"
+  },
+  "pausedMsgConflict": {
+    "message": "別のアプリがすでにこのタブの音声を使用しています。全画面表示を維持するため、ブーストを一時停止中です。「全画面を優先」をオフにすると、キャプチャでブーストできます（全画面は利用できなくなります）。"
+  },
+  "pausedMsgPref": {
+    "message": "このタブでは「全画面を優先」がオンのため、キャプチャによる音量調整は適用されません。オフにするとこのページの音量を調整できます（キャプチャ中は全画面表示を利用できません）。"
+  },
+  "modeCapture": {
+    "message": "キャプチャモード"
+  },
+  "modeCaptureConflict": {
+    "message": "キャプチャモード · 競合"
+  },
+  "modeCaptureTitle": {
+    "message": "このソースは直接制御できないため（DRM・クロスオリジン・要素なし）、タブキャプチャを使用しています。ブースト中は全画面表示を利用できません。全画面にするには 1.0× に戻してください。"
+  },
+  "modeCaptureTitleConflict": {
+    "message": "別のアプリがこのタブの音声を使用中のため、キャプチャでブーストしています。ブースト中は全画面表示を利用できません。"
+  },
+  "captureMsgConflict": {
+    "message": "別のアプリがすでにこのタブの音声を使用しているため、キャプチャでブーストしています（全画面表示は利用できません）。「全画面を優先」をオンにすると、ブーストせずに全画面表示を維持できます。"
+  },
+  "modeNone": {
+    "message": "ブーストなし"
+  }
+}

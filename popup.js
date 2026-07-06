@@ -14,6 +14,28 @@ const MAX = 6.0;
 const LIMITER_KEY = "useLimiter";
 const isUnity = (g) => Math.abs(g - UNITY) < 1e-6;
 
+// i18n: with default_locale set, getMessage falls back to English automatically;
+// the || k guard only covers a key missing from en/ too (shows the key, not blank UI).
+const t = (k) => chrome.i18n.getMessage(k) || k;
+
+// Localize the static markup (elements tagged data-i18n / data-i18n-title / data-i18n-aria).
+// The English text in the HTML stays in place as the no-JS-visible default.
+function applyI18n() {
+  document.documentElement.dir = chrome.i18n.getMessage("@@bidi_dir") || "ltr";
+  for (const el of document.querySelectorAll("[data-i18n]")) {
+    const m = chrome.i18n.getMessage(el.dataset.i18n);
+    if (m) el.textContent = m;
+  }
+  for (const el of document.querySelectorAll("[data-i18n-title]")) {
+    const m = chrome.i18n.getMessage(el.dataset.i18nTitle);
+    if (m) el.title = m;
+  }
+  for (const el of document.querySelectorAll("[data-i18n-aria]")) {
+    const m = chrome.i18n.getMessage(el.dataset.i18nAria);
+    if (m) el.setAttribute("aria-label", m);
+  }
+}
+
 // The slider is POSITION-based (0..POS_MAX) so unity sits dead-center: the quiet range (0→1×) gets
 // the whole LEFT half with fine ~0.01 steps, and boost (1→6×) gets the right half. That's what makes
 // precise low levels (e.g. 0.05×) dialable instead of jumping straight from 0.1× to 0× (mute).
@@ -64,14 +86,14 @@ function canBoost(url) {
 
 function colorFor(gain) {
   if (gain < UNITY) {
-    // attenuation (quieter than original) — a calm cyan, brighter as it climbs back toward unity
+    // attenuation (quieter than original) - a calm cyan, brighter as it climbs back toward unity
     const k = Math.max(0, Math.min(1, gain));
     const r = Math.round(70 + (120 - 70) * k);
     const g = Math.round(150 + (190 - 150) * k);
     const b = Math.round(195 + (220 - 195) * k);
     return { accent: `rgb(${r}, ${g}, ${b})`, glow: `rgba(${r}, ${g}, ${b}, ${0.18 + 0.3 * (1 - k)})` };
   }
-  // boost — keep the original heat curve, anchored at unity (1× = blue → 6× = red)
+  // boost - keep the original heat curve, anchored at unity (1× = blue → 6× = red)
   const t = Math.min(1, Math.max(0, (gain - UNITY) / (MAX - UNITY)));
   let r, g, b;
   if (t < 0.5) {
@@ -92,7 +114,7 @@ function render(gain) {
   els.slider.style.setProperty("--fill", (posFromGain(gain) / POS_MAX) * 100 + "%");
   els.readout.innerHTML = `${fmtGain(gain)}<span class="x">×</span>`;
   if (paused) {
-    // Boost is intentionally NOT applied — show a calm neutral palette, not the hot boost color,
+    // Boost is intentionally NOT applied - show a calm neutral palette, not the hot boost color,
     // so the big readout doesn't imply an active boost (the CSS also dims it via .paused-view).
     document.documentElement.style.setProperty("--accent", "#74e0a6");
     document.documentElement.style.setProperty("--glow", "rgba(116, 224, 166, 0.18)");
@@ -108,7 +130,7 @@ function showMode(mode, conflict, fsPref) {
   els.body.classList.toggle("paused-view", paused);
 
   // The explanation appears on a real conflict; the "Prefer fullscreen" toggle ALSO whenever the
-  // tab is paused — paused means the toggle is what's pausing it, so it must always be escapable
+  // tab is paused - paused means the toggle is what's pausing it, so it must always be escapable
   // (otherwise a tab whose conflict flag was lost would be stuck un-boostable with no UI).
   const showConflict = !!conflict && (mode === "paused" || mode === "capture");
   const showFsRow = paused || showConflict;
@@ -118,28 +140,21 @@ function showMode(mode, conflict, fsPref) {
 
   if (mode === "element") {
     els.mode.dataset.state = "element";
-    els.modeText.textContent = "Fullscreen mode";
-    els.mode.title = "Adjusting the page's own media element in-page — fullscreen stays available.";
+    els.modeText.textContent = t("modeElement");
+    els.mode.title = t("modeElementTitle");
   } else if (mode === "paused") {
     els.mode.dataset.state = "paused";
-    els.modeText.textContent = "Fullscreen kept · boost paused";
-    els.mode.title = conflict
-      ? "Another app is using this tab's audio. Boost is paused so native fullscreen keeps working."
-      : "“Prefer fullscreen” is on for this tab, so the volume level isn't applied via capture.";
-    els.conflictMsg.textContent = conflict
-      ? "Another app is already using this tab's audio. Boost is paused so fullscreen keeps working — turn off “Prefer fullscreen” to boost via capture instead (fullscreen off)."
-      : "“Prefer fullscreen” is on for this tab, so the level isn't applied via capture. Turn it off to adjust the volume on this page (fullscreen is unavailable while capturing).";
+    els.modeText.textContent = t("modePaused");
+    els.mode.title = conflict ? t("modePausedTitleConflict") : t("modePausedTitlePref");
+    els.conflictMsg.textContent = conflict ? t("pausedMsgConflict") : t("pausedMsgPref");
   } else if (mode === "capture") {
     els.mode.dataset.state = "capture";
-    els.modeText.textContent = conflict ? "Capture mode · conflict" : "Capture mode";
-    els.mode.title = conflict
-      ? "Another app is using this tab's audio, so it's boosting via capture. Fullscreen is disabled while boosted."
-      : "This source can't be hooked directly (DRM, cross-origin, or no element), so tab capture is used. Fullscreen is disabled while boosted; drop to 1.0× to fullscreen.";
-    if (conflict) els.conflictMsg.textContent =
-      "Another app is already using this tab's audio, so it's boosting via capture — fullscreen is unavailable. Turn on “Prefer fullscreen” to keep fullscreen instead (no boost).";
+    els.modeText.textContent = conflict ? t("modeCaptureConflict") : t("modeCapture");
+    els.mode.title = conflict ? t("modeCaptureTitleConflict") : t("modeCaptureTitle");
+    if (conflict) els.conflictMsg.textContent = t("captureMsgConflict");
   } else if (mode === "none") {
     els.mode.dataset.state = "";          // drop the green/amber styling back to muted
-    els.modeText.textContent = "Not boosting";
+    els.modeText.textContent = t("modeNone");
     els.mode.title = "";
   }
   // undefined → leave the last known label in place.
@@ -157,7 +172,7 @@ async function init() {
   tab = active;
 
   if (!canBoost(tab?.url)) { els.body.classList.add("is-blocked"); return; }
-  els.sub.textContent = new URL(tab.url).hostname.replace(/^www\./, "") + " · this tab";
+  els.sub.textContent = new URL(tab.url).hostname.replace(/^www\./, "") + " · " + t("subThisTab");
 
   const pref = await chrome.storage.local.get(LIMITER_KEY);
   useLimiter = pref[LIMITER_KEY] !== false;
@@ -175,7 +190,7 @@ async function init() {
   showMode(prep.mode, prep.conflict, fsPriority);
 
   // Re-apply on open (restores the level after a reload; harmless nudge if already running).
-  // Skip while a background reload-restore is in flight — it will apply the level, and a
+  // Skip while a background reload-restore is in flight - it will apply the level, and a
   // competing call here could commit a premature "capture" before the player has loaded.
   if (!isUnity(gain) && !prep.restoring) pushGain(gain);
 
@@ -190,7 +205,7 @@ async function init() {
     els.limiter.setAttribute("aria-checked", String(useLimiter));
     chrome.storage.local.set({ [LIMITER_KEY]: useLimiter });
     const g = gainFromPos(parseFloat(els.slider.value));
-    if (!isUnity(g)) pushGain(g); // at 1× nothing is engaged — pushing would just demote the pill
+    if (!isUnity(g)) pushGain(g); // at 1× nothing is engaged - pushing would just demote the pill
   });
 
   // Keyboard support: the native step is 1/1000th of the track, so arrow presses would mostly be
@@ -223,4 +238,5 @@ async function init() {
   });
 }
 
+applyI18n();
 init();

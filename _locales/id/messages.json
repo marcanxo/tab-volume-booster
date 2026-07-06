@@ -1,0 +1,80 @@
+{
+  "appDesc": {
+    "message": "Keraskan tab hingga 6x atau kecilkan, layar penuh terjaga jika memungkinkan. Memori per tab, limiter bawaan, tanpa pengumpulan data."
+  },
+  "resetBtn": {
+    "message": "reset"
+  },
+  "resetTitle": {
+    "message": "Reset ke 1× (nonaktif)"
+  },
+  "subCurrentTab": {
+    "message": "Tab saat ini"
+  },
+  "subThisTab": {
+    "message": "tab ini"
+  },
+  "modeChecking": {
+    "message": "Memeriksa…"
+  },
+  "scaleOff": {
+    "message": "1× nonaktif"
+  },
+  "sliderAria": {
+    "message": "Tingkat volume"
+  },
+  "limiterLabel": {
+    "message": "Limiter"
+  },
+  "limiterHint": {
+    "message": "Meredam distorsi saat boost tinggi"
+  },
+  "fsLabel": {
+    "message": "Utamakan layar penuh"
+  },
+  "fsHint": {
+    "message": "Lewati perekaman - layar penuh terjaga, tanpa boost"
+  },
+  "blockedText": {
+    "message": "Boost tidak dapat dilakukan di halaman ini. Halaman browser, Web Store, dan ekstensi lain tidak mengizinkan perekaman audio. Buka situs biasa (YouTube, dll.) lalu coba lagi."
+  },
+  "modeElement": {
+    "message": "Mode layar penuh"
+  },
+  "modeElementTitle": {
+    "message": "Menyesuaikan elemen media halaman itu sendiri secara langsung - layar penuh tetap tersedia."
+  },
+  "modePaused": {
+    "message": "Layar penuh · boost dijeda"
+  },
+  "modePausedTitleConflict": {
+    "message": "Aplikasi lain sedang menggunakan audio tab ini. Boost dijeda agar layar penuh bawaan tetap berfungsi."
+  },
+  "modePausedTitlePref": {
+    "message": "“Utamakan layar penuh” aktif untuk tab ini, jadi tingkat volume tidak diterapkan lewat perekaman."
+  },
+  "pausedMsgConflict": {
+    "message": "Aplikasi lain sudah menggunakan audio tab ini. Boost dijeda agar layar penuh tetap berfungsi - nonaktifkan “Utamakan layar penuh” untuk melakukan boost lewat perekaman (layar penuh nonaktif)."
+  },
+  "pausedMsgPref": {
+    "message": "“Utamakan layar penuh” aktif untuk tab ini, jadi tingkat volume tidak diterapkan lewat perekaman. Nonaktifkan untuk mengatur volume di halaman ini (layar penuh tidak tersedia selama perekaman)."
+  },
+  "modeCapture": {
+    "message": "Mode perekaman"
+  },
+  "modeCaptureConflict": {
+    "message": "Mode perekaman · konflik"
+  },
+  "modeCaptureTitle": {
+    "message": "Sumber ini tidak bisa diakses langsung (DRM, lintas origin, atau tanpa elemen), jadi perekaman tab digunakan. Layar penuh dinonaktifkan selama boost; turunkan ke 1.0× untuk layar penuh."
+  },
+  "modeCaptureTitleConflict": {
+    "message": "Aplikasi lain sedang menggunakan audio tab ini, jadi boost dilakukan lewat perekaman. Layar penuh dinonaktifkan selama boost."
+  },
+  "captureMsgConflict": {
+    "message": "Aplikasi lain sudah menggunakan audio tab ini, jadi boost dilakukan lewat perekaman - layar penuh tidak tersedia. Aktifkan “Utamakan layar penuh” untuk mempertahankan layar penuh (tanpa boost)."
+  },
+  "modeNone": {
+    "message": "Boost nonaktif"
+  }
+}
