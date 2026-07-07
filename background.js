@@ -34,10 +34,24 @@ const sset = (k, v) => chrome.storage.session.set({ [k]: v });
 const sdel = (k) => chrome.storage.session.remove(k);
 
 // ---- capture-mode bookkeeping ----
+// All mutations of the shared active list go through one chain: mark/unmark are read-modify-writes
+// on a single storage key and get called from serialized AND unserialized paths (trackEnded,
+// captureFailed, tab close) - interleaving them could resurrect or lose entries.
+let activeChain = Promise.resolve();
+function withActiveLock(fn) {
+  const p = activeChain.then(fn, fn);
+  activeChain = p.then(() => {}, () => {});
+  return p;
+}
 async function getActive() { const l = await sget(ACTIVE_KEY); return Array.isArray(l) ? l : []; }
 const setActive = (l) => sset(ACTIVE_KEY, l);
-async function markActive(id) { const l = await getActive(); if (!l.includes(id)) { l.push(id); await setActive(l); } }
-async function unmarkActive(id) { await setActive((await getActive()).filter((x) => x !== id)); }
+const markActive = (id) => withActiveLock(async () => {
+  const l = await getActive();
+  if (!l.includes(id)) { l.push(id); await setActive(l); }
+});
+const unmarkActive = (id) => withActiveLock(async () => {
+  await setActive((await getActive()).filter((x) => x !== id));
+});
 
 // ---- offscreen document (capture engine host) ----
 let offscreenSetup = null;
@@ -113,7 +127,7 @@ const clearMode = (tabId) => sdel(TABMODE(tabId));
 // ---- capture path gain control ----
 async function captureSetGain(tabId, gain, useLimiter) {
   const createdFresh = await ensureOffscreen();
-  if (createdFresh) await setActive([]); // new doc → no graphs
+  if (createdFresh) await withActiveLock(() => setActive([])); // new doc → no graphs (same lock as mark/unmark)
   const active = await getActive();
   if (active.includes(tabId)) {
     toOffscreen({ cmd: "update", tabId, gain, useLimiter });
@@ -127,8 +141,10 @@ async function captureStop(tabId) { toOffscreen({ cmd: "stop", tabId }); await u
 
 // ---- release (1.0× / off): tear down whichever path, restore fullscreen ----
 async function release(tabId) {
-  const info = await getMode(tabId);
-  if (info && info.mode === "element") await toFrame(tabId, info.frameId, { cmd: "stop" });
+  // Broadcast the stop to ALL frames, not just the recorded one: TABMODE can be stale or cleared
+  // (mid-restore), and a re-probe may have retargeted the mode to a different frame earlier - a
+  // hook we engaged anywhere must never survive a release. stop() is idempotent in every frame.
+  await toFrame(tabId, null, { cmd: "stop" });
   await captureStop(tabId); // also release capture if it was the active path
   await sdel(TABGAIN(tabId));
   await clearMode(tabId);
@@ -138,6 +154,10 @@ async function release(tabId) {
 // fsPriority is the per-tab user choice "I'd rather keep native fullscreen than boost via capture".
 // conflict = the element is already hooked by another app/page (the case we surface + explain).
 async function applyCaptureOrPause(tabId, gain, useLimiter, conflict) {
+  // Whatever happens next, no element hook of OURS may stay hot underneath: a frame retarget or a
+  // transient engage failure could otherwise leave element gain AND capture gain stacked (double
+  // boost). The broadcast is a no-op in frames without a hook and can't touch a foreign app's hook.
+  await toFrame(tabId, null, { cmd: "stop" });
   if ((await sget(TABFS(tabId))) === true) {
     await captureStop(tabId);                       // make sure nothing is capturing the tab
     const info = { mode: "paused", conflict: !!conflict };
@@ -177,9 +197,18 @@ async function setGain(tabId, gain, useLimiter) {
       const fresh = await predictMode(tabId);
       await setMode(tabId, fresh);
       if (fresh.mode !== "element") return await applyCaptureOrPause(tabId, gain, useLimiter, false);
+      // Retargeting to a different frame: make sure the old frame's hook (if any survived) is
+      // parked at unity first - it would otherwise stay hot alongside the new one.
+      if (fresh.frameId !== info.frameId) await toFrame(tabId, info.frameId, { cmd: "stop" });
       res = await toFrame(tabId, fresh.frameId, { cmd: "engage", gain, useLimiter });
     }
-    if (res && res.ok) return { mode: "element", confirmed: !!res.signal };
+    if (res && res.ok) {
+      // The tab may have been in CAPTURE mode before this probe picked element (a hookable player
+      // appeared after a "next episode" swap): never leave the offscreen graph applying its gain
+      // UNDER the fresh element hook - the two would stack to double volume.
+      if ((await getActive()).includes(tabId)) await captureStop(tabId);
+      return { mode: "element", confirmed: !!res.signal };
+    }
     // Hook couldn't engage. reason 'already-hooked' = another app/page owns the element (a CONFLICT
     // we explain); other reasons (suspended / cross-origin) are ordinary capture fallbacks.
     return await applyCaptureOrPause(tabId, gain, useLimiter, !!(res && res.reason === "already-hooked"));
@@ -260,7 +289,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (!isActiveGain(g)) return { mode: "none" };
       const pref = await chrome.storage.local.get(LIMITER_KEY);
       return await setGain(msg.tabId, g, pref[LIMITER_KEY] !== false);
-    }).then(sendResponse).catch(() => sendResponse({ mode: "none" }));
+    }).then(sendResponse).catch(() => sendResponse({ mode: "none", failed: true }));
     return true;
   }
 
@@ -272,20 +301,23 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "setGain") {
     serialized(msg.tabId, () => setGain(msg.tabId, msg.gain, msg.useLimiter))
       .then(sendResponse)
-      .catch((err) => { console.error("setGain failed:", err); sendResponse({ mode: "none" }); });
+      .catch((err) => { console.error("setGain failed:", err); sendResponse({ mode: "none", failed: true }); });
     return true;
   }
 });
 
-chrome.tabs.onRemoved.addListener(async (tabId) => {
+chrome.tabs.onRemoved.addListener((tabId) => {
   restoring.delete(tabId);      // forget any in-flight restore bookkeeping for the closed tab
   pendingRekick.delete(tabId);  // (the loop itself self-aborts via its non-unity gain recheck)
-  opChain.delete(tabId);        // drop the per-tab op queue tail
-  await sdel(TABGAIN(tabId));
-  await sdel(TABFS(tabId));
-  await clearMode(tabId);
-  await unmarkActive(tabId);
-  toOffscreen({ cmd: "stop", tabId });
+  // The storage cleanup runs THROUGH the per-tab op queue: an in-flight setGain would otherwise
+  // rewrite tabgain/tabmode right after the deletes, leaking orphaned session entries.
+  serialized(tabId, async () => {
+    await sdel(TABGAIN(tabId));
+    await sdel(TABFS(tabId));
+    await clearMode(tabId);
+    await unmarkActive(tabId);
+    toOffscreen({ cmd: "stop", tabId });
+  });
 });
 
 // ---- auto-restore boost after a full-document reload / navigation ----
@@ -310,20 +342,40 @@ async function restoreAfterLoad(tabId, gain, useLimiter, prior) {
     // (→ apply the new level, not the one captured when the restore started) mid-loop.
     const g = await sget(TABGAIN(tabId));
     if (!isActiveGain(g)) return; // tab closed / dropped to 1.0× mid-restore → abort
+    // The tab itself may have closed mid-loop (the serialized cleanup already ran): bail before
+    // setMode/ensureOffscreen can recreate session keys or an idle offscreen doc for a dead tab.
+    try { await chrome.tabs.get(tabId); } catch (_) { return; }
     const info = await predictMode(tabId); // re-injects content.js + non-destructive probe
     if (info.mode === "element") {
       await setMode(tabId, info);
+      // The probe may have picked a DIFFERENT frame than before the swap: park the previous
+      // frame's hook (if it survived) so it can't stay hot alongside the new one.
+      if (prior && prior.mode === "element" && prior.frameId != null && prior.frameId !== info.frameId)
+        await toFrame(tabId, prior.frameId, { cmd: "stop" });
       const res = await toFrame(tabId, info.frameId, { cmd: "engage", gain: g, useLimiter });
       if (res && res.ok) {
+        // Same as setGain: a prior CAPTURE graph must not keep boosting under the new hook.
+        if ((await getActive()).includes(tabId)) await captureStop(tabId);
         // Engage takes up to ~1.5s (probe + measure) - re-verify the user didn't release or
         // retarget the level meanwhile; the user's action must always win over the restore.
         const after = await sget(TABGAIN(tabId));
-        if (!isActiveGain(after)) { await toFrame(tabId, info.frameId, { cmd: "stop" }); await clearMode(tabId); }
+        if (!isActiveGain(after)) { await toFrame(tabId, null, { cmd: "stop" }); await clearMode(tabId); }
         else if (after !== g) await toFrame(tabId, info.frameId, { cmd: "engage", gain: after, useLimiter });
         return;
       }
       // 'already-hooked' = a conflict → resolve to capture/paused (honoring fsPriority) and stop.
-      if (res && res.reason === "already-hooked") { await applyCaptureOrPause(tabId, g, useLimiter, true); return; }
+      if (res && res.reason === "already-hooked") {
+        await applyCaptureOrPause(tabId, g, useLimiter, true);
+        await reverifyGain(tabId, g, useLimiter, true);
+        return;
+      }
+      // The element can't be hooked safely (same-origin URL redirecting cross-origin): retrying
+      // can't change that - fall back to capture (no conflict), exactly like setGain would.
+      if (res && res.reason === "cross-origin-redirect") {
+        await applyCaptureOrPause(tabId, g, useLimiter, false);
+        await reverifyGain(tabId, g, useLimiter, false);
+        return;
+      }
       // 'suspended' (low-MEI: won't run without a gesture) can't improve by retrying. Clear the
       // stale element mode so a popup reopen re-probes; don't fall back to capture.
       if (res && res.reason === "suspended") { await clearMode(tabId); return; }
@@ -332,6 +384,7 @@ async function restoreAfterLoad(tabId, gain, useLimiter, prior) {
       // No hookable element and this tab genuinely needs capture → apply once (honors fsPriority;
       // clears the mode rather than lying if capture can't start, e.g. grant revoked by reload).
       await applyCaptureOrPause(tabId, g, useLimiter, !!(prior && prior.conflict));
+      await reverifyGain(tabId, g, useLimiter, !!(prior && prior.conflict));
       return;
     }
     await new Promise((r) => setTimeout(r, RESTORE_DELAY_MS));
@@ -341,6 +394,23 @@ async function restoreAfterLoad(tabId, gain, useLimiter, prior) {
   // that was fullscreen-friendly. Leave the boost level stored but the mode cleared, so reopening
   // the popup re-probes (and the user can opt into capture there if they actually want it).
   await clearMode(tabId);
+}
+
+// After a restore-path capture apply (which can take a while: offscreen spin-up + getMediaStreamId),
+// re-verify the stored level: the user may have released or moved the slider mid-apply, and their
+// action must always win over the restore. Mirrors the element branch's post-engage re-check.
+async function reverifyGain(tabId, applied, useLimiter, conflict) {
+  const after = await sget(TABGAIN(tabId));
+  if (!isActiveGain(after)) {
+    // Released mid-apply. Tear the paths down but DON'T touch TABGAIN: a concurrent serialized
+    // setGain may have re-written it right after our read, and deleting it here would silently
+    // wipe the user's newest level (their release already removed the old value itself).
+    await toFrame(tabId, null, { cmd: "stop" });
+    await captureStop(tabId);
+    await clearMode(tabId);
+  } else if (after !== applied) {
+    await applyCaptureOrPause(tabId, after, useLimiter, conflict);
+  }
 }
 
 // Shared by reload (onUpdated) and element-swap (elementLost): patiently re-apply the stored boost.

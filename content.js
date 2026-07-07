@@ -56,6 +56,11 @@
     if (/^(blob:|data:|mediastream:)/.test(src)) return { safe: true, reason: "blob" };
     try {
       const u = new URL(src, location.href);
+      // Same-origin URLs keep reason 'same-origin' EVEN IF el.crossOrigin is set: the attribute
+      // only matters at fetch time, so a page that sets it after load may still be playing a
+      // tainted no-cors resource - the redirect probe must stay in the path for these. Worst
+      // case the probe refuses a hookable element and we fall back to capture: safe direction
+      // (losing fullscreen is recoverable, silencing a tab is not).
       if (u.origin === location.origin) return { safe: true, reason: "same-origin" };
       if (el.crossOrigin === "anonymous" || el.crossOrigin === "use-credentials")
         return { safe: true, reason: "cors-enabled" };
@@ -63,6 +68,39 @@
     } catch {
       return { safe: false, reason: "bad-url" };
     }
+  }
+
+  // The URL-string check above can be defeated by a same-origin src that HTTP-redirects to a
+  // cross-origin host (common pattern: /media/id redirecting to a presigned CDN URL). The element
+  // plays fine natively, but its media data is CORS-tainted and createMediaElementSource would
+  // output pure silence, permanently (the hook is one-shot). Redirects are invisible on the
+  // element, so before trusting a 'same-origin' verdict we probe the URL with a mode:'same-origin'
+  // fetch: it REJECTS on any cross-origin redirect. Any resolved HTTP status counts as clean
+  // (only the redirect matters); rejection or a slow server means "don't risk it" (capture instead).
+  const chainVerdicts = new Map(); // src -> Promise<boolean>
+  function sameOriginChainOk(src) {
+    let v = chainVerdicts.get(src);
+    if (!v) {
+      v = (async () => {
+        const ctl = new AbortController();
+        const kill = setTimeout(() => ctl.abort(), 2000);
+        try {
+          const res = await fetch(src, {
+            mode: "same-origin", credentials: "same-origin", cache: "force-cache",
+            headers: { Range: "bytes=0-0" }, signal: ctl.signal
+          });
+          try { res.body && res.body.cancel(); } catch (_) {}
+          return true;
+        } catch (_) {
+          return false;
+        } finally { clearTimeout(kill); }
+      })();
+      chainVerdicts.set(src, v);
+      // Only KEEP positive verdicts: a rejection can be transient (2s timeout on a cold server,
+      // brief network blip) and must not disable element mode for this src for the page's lifetime.
+      v.then((ok) => { if (!ok) chainVerdicts.delete(src); });
+    }
+    return v;
   }
 
   // Toggle the limiter by RAMPING its compression ratio (20:1 on → 1:1 off) rather than disconnecting
@@ -100,21 +138,40 @@
         } catch (_) {
           return res({ signal: false, rms: peak }); // graph torn down mid-measure → settle, don't hang
         }
-        requestAnimationFrame(tick);
+        // setTimeout, NOT requestAnimationFrame: rAF never fires in a hidden tab, so an engage
+        // during a background restore would hang here and wedge the worker's restore lock.
+        setTimeout(tick, 50);
       })();
     });
   }
 
-  // Fully release our graph so a later engage() will hook a FRESH element instead of no-opping on
-  // the dead one. Used when the player swaps its <video> out from under us. Safe to close the
-  // context here because the old element is gone - nothing audible is routed through it anymore.
-  function teardown() {
+  // Retired hooks: elements that were swapped out or superseded. createMediaElementSource is
+  // one-shot and closing a ctx silences its element FOREVER, so a retired graph is parked at
+  // unity (transparent) with its ctx kept OPEN, and re-adopted by engage() if its element comes
+  // back (theater-mode re-parenting, episode flip that reuses the node, a long detach). Bounded:
+  // beyond 3 parked graphs the oldest is closed for real - its element is long gone by then.
+  const retired = [];
+  function retireCurrent() {
     try { if (S.mo) S.mo.disconnect(); } catch (_) {}
-    try { S.src && S.src.disconnect(); } catch (_) {}
-    try { S.gain && S.gain.disconnect(); } catch (_) {}
-    try { S.limiter && S.limiter.disconnect(); } catch (_) {}
-    try { S.analyser && S.analyser.disconnect(); } catch (_) {}
-    try { S.ctx && S.ctx.close(); } catch (_) {}
+    if (S.ctx) {
+      try {
+        S.gain.gain.setTargetAtTime(1, S.ctx.currentTime, 0.02);
+        S.limiter.ratio.setTargetAtTime(1, S.ctx.currentTime, 0.02);
+        S.limiter.threshold.setTargetAtTime(0, S.ctx.currentTime, 0.02);
+      } catch (_) {}
+      retired.push({ ctx: S.ctx, src: S.src, gain: S.gain, limiter: S.limiter, analyser: S.analyser, el: S.el });
+      // Reclaim only graphs whose element has really left the DOM: the engage-switch path parks
+      // elements that are still attached (merely paused), and closing THEIR ctx would silence
+      // them forever if they resume. Connected graphs stay parked at unity - the cap is soft and
+      // can grow on pages with many hooked players; that's the safe trade.
+      while (retired.length > 3) {
+        const idx = retired.findIndex((g) => !g.el || !g.el.isConnected);
+        if (idx < 0) break;
+        const g = retired.splice(idx, 1)[0];
+        try { g.src.disconnect(); } catch (_) {}
+        try { g.ctx.close(); } catch (_) {}
+      }
+    }
     S.ctx = S.src = S.gain = S.limiter = S.analyser = S.el = S.mo = null;
     S.engaged = false;
   }
@@ -135,9 +192,11 @@
       setTimeout(() => {
         pending = false;
         if (el.isConnected) return; // came back → keep the live graph, keep watching
-        // Genuinely replaced. Tear down the dead graph (so the next engage hooks the NEW element
-        // rather than updating gain on the removed one), then ask the worker to re-engage.
-        teardown();
+        if (S.el !== el) return;    // a queued engage already switched hooks - don't retire the successor's live graph
+        // Genuinely replaced. Park the graph at unity WITHOUT closing its ctx (a same-node
+        // re-attach later would be permanently silent otherwise; engage() re-adopts parked
+        // graphs), then ask the worker to re-engage on whatever the page shows now.
+        retireCurrent();
         try { chrome.runtime.sendMessage({ type: "elementLost" }); } catch (_) {}
       }, 150);
     });
@@ -152,11 +211,18 @@
   // Every frame watches its own subtree for media/iframe swaps and nudges the
   // worker, which no-ops instantly unless this tab actually has a level set.
   let navPingTimer = null;
+  let lastNavPing = -2000; // negative: the FIRST ping must not be rate-capped against the frame's time origin
+  const volWatched = new WeakSet(); // elements with a one-shot volumechange re-check armed
   function pingNavigated() {
-    clearTimeout(navPingTimer);
+    if (navPingTimer) return; // a send is already scheduled - it covers this signal too
+    // Debounce bursts AND cap the rate: media DOM churn (ad rotations, lazy players) would
+    // otherwise wake the MV3 service worker over and over, even when nothing is boosted.
+    const wait = Math.max(250, 2000 - (performance.now() - lastNavPing));
     navPingTimer = setTimeout(() => {
+      navPingTimer = null;
+      lastNavPing = performance.now();
       try { chrome.runtime.sendMessage({ type: "navigated" }); } catch (_) {}
-    }, 250);
+    }, wait);
   }
 
   // One-shot: when engage() refused because the AudioContext couldn't run (autoplay
@@ -205,18 +271,58 @@
   async function engage(gain, useLimiter) {
     S.useLimiter = useLimiter !== false;
 
-    // Already hooked → just update gain + ramp the limiter (no re-hook, no disconnect click).
+    // Already hooked → normally just update gain (no re-hook, no disconnect click). But first
+    // check the page didn't move on to a NEW element while keeping the old node in the DOM
+    // (a player that builds a fresh <video> per episode): updating the idle old hook would
+    // leave the actually-playing element unboosted. Only switch on clear evidence.
     if (S.engaged && S.ctx) {
-      S.gain.gain.setTargetAtTime(gain, S.ctx.currentTime, 0.02);
-      applyLimiter(S.useLimiter, false);
-      return { ok: true, engaged: true };
+      const cur = S.el;
+      const next = pickElement();
+      const curIdle = !cur || !cur.isConnected || cur.paused || cur.ended;
+      const nextPlaying = !!next && next !== cur && !next.paused && !next.ended && next.readyState >= 2;
+      // AUDIBLE is required: muted autoplaying elements (hero loops, hover previews) must never
+      // steal the hook from a merely-paused main video - that would be sticky, since the loop
+      // keeps "playing" forever and the real player would resume at native volume.
+      const nextAudible = nextPlaying && !next.muted && next.volume > 0;
+      if (!(curIdle && nextAudible)) {
+        // A fresh episode's video often autoplays MUTED and unmutes a beat later. If muteness is
+        // the only thing blocking the switch, re-check the moment its volume state changes.
+        if (curIdle && nextPlaying && !volWatched.has(next)) {
+          volWatched.add(next);
+          const once = () => { next.removeEventListener("volumechange", once); volWatched.delete(next); pingNavigated(); };
+          next.addEventListener("volumechange", once);
+        }
+        S.gain.gain.setTargetAtTime(gain, S.ctx.currentTime, 0.02);
+        applyLimiter(S.useLimiter, false);
+        return { ok: true, engaged: true };
+      }
+      retireCurrent(); // park the idle hook at unity and fall through to hook the live element
     }
 
     const el = pickElement();
     if (!el) return { ok: false, reason: "no-element" };
 
+    // If we've hooked this exact element before (swapped out, now back), re-adopt its parked
+    // graph - a second createMediaElementSource on the same element would throw.
+    const back = retired.findIndex((g) => g.el === el);
+    if (back >= 0) {
+      const g = retired.splice(back, 1)[0];
+      S.ctx = g.ctx; S.src = g.src; S.gain = g.gain; S.limiter = g.limiter; S.analyser = g.analyser; S.el = g.el;
+      try { await S.ctx.resume(); } catch (_) {}
+      S.gain.gain.setTargetAtTime(gain, S.ctx.currentTime, 0.02);
+      applyLimiter(S.useLimiter, false);
+      S.engaged = true;
+      watchElement(el);
+      const mm = await measure();
+      return { ok: true, engaged: true, signal: mm.signal };
+    }
+
     const a = assess(el);
     if (!a.safe) return { ok: false, reason: a.reason };
+    // 'same-origin' by URL alone isn't proof: verify the redirect chain before the one-shot hook.
+    const probedSrc = el.currentSrc || el.src || "";
+    if (a.reason === "same-origin" && !(await sameOriginChainOk(probedSrc)))
+      return { ok: false, reason: "cross-origin-redirect" };
 
     let ctx;
     try { ctx = new (window.AudioContext || window.webkitAudioContext)(); }
@@ -230,6 +336,15 @@
       try { ctx.close(); } catch (_) {}
       armGestureRetry(); // first click/key in this frame unlocks audio → auto-retry then
       return { ok: false, reason: "suspended" };
+    }
+
+    // Final pre-hook re-check: the probe/resume awaits above can take up to ~2s, and a player may
+    // rotate its src meanwhile (ad stitching). The one-shot hook lands on the ELEMENT, so it must
+    // still show exactly what was assessed - otherwise refuse; the next engage re-gates the new src.
+    const a2 = assess(el);
+    if (!a2.safe || (el.currentSrc || el.src || "") !== probedSrc) {
+      try { ctx.close(); } catch (_) {}
+      return { ok: false, reason: "src-changed" };
     }
 
     let src;
@@ -267,6 +382,17 @@
     return { ok: true };
   }
 
+  // engage/stop run strictly one at a time in this frame: two concurrent engages could both pass
+  // the S.engaged check and race createMediaElementSource - the loser would throw and be
+  // misreported as an 'already-hooked' CONFLICT, making the worker stack capture on top of the
+  // live element hook (double gain). The queue makes the second call see the first one's result.
+  let cmdChain = Promise.resolve();
+  function enqueue(fn) {
+    const p = cmdChain.then(fn, fn);
+    cmdChain = p.then(() => {}, () => {});
+    return p;
+  }
+
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (!msg || !msg.cmd) return;
 
@@ -275,6 +401,8 @@
       const el = pickElement();
       if (!el) return;
       const a = assess(el);
+      // Warm the redirect check now (fire-and-forget) so a following engage hits the cache.
+      if (a.safe && a.reason === "same-origin") sameOriginChainOk(el.currentSrc || el.src);
       const r = el.getBoundingClientRect();
       try {
         chrome.runtime.sendMessage({
@@ -294,11 +422,16 @@
     if (msg.cmd === "engage") {
       // The .catch guarantees a response even if engage throws - otherwise the worker's await
       // would hang forever (it holds the 'restoring' lock during reload-restores).
-      engage(msg.gain, msg.useLimiter)
+      enqueue(() => engage(msg.gain, msg.useLimiter))
         .then(sendResponse)
         .catch(() => { try { sendResponse({ ok: false, reason: "error" }); } catch (_) {} });
       return true;
     }
-    if (msg.cmd === "stop") { sendResponse(stop()); return true; }
+    if (msg.cmd === "stop") {
+      enqueue(async () => stop())
+        .then(sendResponse)
+        .catch(() => { try { sendResponse({ ok: true }); } catch (_) {} });
+      return true;
+    }
   });
 })();

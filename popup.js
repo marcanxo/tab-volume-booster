@@ -112,6 +112,8 @@ function colorFor(gain) {
 
 function render(gain) {
   els.slider.style.setProperty("--fill", (posFromGain(gain) / POS_MAX) * 100 + "%");
+  // Screen readers get the actual multiplier, not the raw 0-1000 track position.
+  els.slider.setAttribute("aria-valuetext", fmtGain(gain) + "×");
   els.readout.innerHTML = `${fmtGain(gain)}<span class="x">×</span>`;
   if (paused) {
     // Boost is intentionally NOT applied - show a calm neutral palette, not the hot boost color,
@@ -163,7 +165,12 @@ function showMode(mode, conflict, fsPref) {
 
 function pushGain(gain) {
   chrome.runtime.sendMessage({ type: "setGain", tabId: tab.id, gain, useLimiter }, (res) => {
-    if (res && res.mode) showMode(res.mode, res.conflict, fsPriority);
+    if (!res || !res.mode) return;
+    showMode(res.mode, res.conflict, fsPriority);
+    // Apply FAILED (e.g. capture grant revoked): the stored target stays on the slider, but
+    // nothing is boosting - dim the readout like the paused view so the big hot number
+    // doesn't claim an active boost. showMode() above already reset the class for successes.
+    if (res.failed === true) els.body.classList.add("paused-view");
   });
 }
 
@@ -171,7 +178,11 @@ async function init() {
   const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
   tab = active;
 
-  if (!canBoost(tab?.url)) { els.body.classList.add("is-blocked"); return; }
+  if (!canBoost(tab?.url)) {
+    els.body.classList.add("is-blocked");
+    els.mode.style.display = "none"; // no probe will run - don't leave the pill on "Checking…"
+    return;
+  }
   els.sub.textContent = new URL(tab.url).hostname.replace(/^www\./, "") + " · " + t("subThisTab");
 
   const pref = await chrome.storage.local.get(LIMITER_KEY);
@@ -180,7 +191,7 @@ async function init() {
 
   // Non-destructive predict + restore (worker probes the page and returns mode + saved level).
   const prep = await new Promise((resolve) =>
-    chrome.runtime.sendMessage({ type: "prepare", tabId: tab.id }, (r) => resolve(r || { mode: "capture", gain: 1 }))
+    chrome.runtime.sendMessage({ type: "prepare", tabId: tab.id }, (r) => resolve(r || { mode: "none", gain: 1 })) // no worker answer → claim nothing, not "capture"
   );
 
   fsPriority = !!prep.fsPriority;
@@ -227,7 +238,9 @@ async function init() {
     fsPriority = els.fsToggle.getAttribute("aria-checked") !== "true";
     els.fsToggle.setAttribute("aria-checked", String(fsPriority));
     chrome.runtime.sendMessage({ type: "setFsPriority", tabId: tab.id, value: fsPriority }, (res) => {
-      if (res && res.mode) showMode(res.mode, res.conflict, fsPriority);
+      if (!res || !res.mode) return;
+      showMode(res.mode, res.conflict, fsPriority);
+      if (res.failed === true) els.body.classList.add("paused-view"); // same honest dim as pushGain
     });
   });
 
