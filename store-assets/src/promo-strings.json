@@ -1,0 +1,86 @@
+{
+  "en": {
+    "h1a": "Make any tab louder.",
+    "h1b": "Up to 6×.",
+    "sub": "Or quieter, all the way down to silence. Native fullscreen keeps working while you boost.",
+    "chips": ["per tab", "built-in limiter", "no data collected", "open source · GPL-3.0"]
+  },
+  "de": {
+    "h1a": "Mach jeden Tab lauter.",
+    "h1b": "Bis zu 6×.",
+    "sub": "Oder leiser, bis hin zur völligen Stille. Natives Vollbild funktioniert auch mit Boost weiter.",
+    "chips": ["pro Tab", "Limiter eingebaut", "keine Datenerfassung", "Open Source · GPL-3.0"]
+  },
+  "es": {
+    "h1a": "Sube el volumen de cualquier pestaña.",
+    "h1b": "Hasta 6×.",
+    "sub": "O bájalo hasta el silencio total. La pantalla completa nativa sigue funcionando mientras amplificas.",
+    "chips": ["por pestaña", "limitador integrado", "sin recopilar datos", "código abierto · GPL-3.0"]
+  },
+  "pt_BR": {
+    "h1a": "Deixe qualquer aba mais alta.",
+    "h1b": "Até 6×.",
+    "sub": "Ou mais baixa, até o silêncio total. A tela cheia nativa continua funcionando com o aumento ativo.",
+    "chips": ["por aba", "limitador embutido", "sem coleta de dados", "código aberto · GPL-3.0"]
+  },
+  "fr": {
+    "h1a": "Montez le son de chaque onglet.",
+    "h1b": "Jusqu'à 6×.",
+    "sub": "Ou baissez-le jusqu'au silence complet. Le plein écran natif continue de fonctionner pendant le boost.",
+    "chips": ["par onglet", "limiteur intégré", "aucune donnée collectée", "open source · GPL-3.0"]
+  },
+  "it": {
+    "h1a": "Alza il volume di ogni scheda.",
+    "h1b": "Fino a 6×.",
+    "sub": "O abbassalo fino al silenzio totale. Lo schermo intero nativo continua a funzionare durante il boost.",
+    "chips": ["per scheda", "limiter integrato", "nessun dato raccolto", "open source · GPL-3.0"]
+  },
+  "pl": {
+    "h1a": "Podgłośnij dowolną kartę.",
+    "h1b": "Aż do 6×.",
+    "sub": "Albo ścisz ją aż do zupełnej ciszy. Natywny pełny ekran działa dalej podczas podbicia.",
+    "chips": ["na kartę", "wbudowany limiter", "bez zbierania danych", "open source · GPL-3.0"]
+  },
+  "ru": {
+    "h1a": "Сделайте любую вкладку громче.",
+    "h1b": "До 6×.",
+    "sub": "Или тише, вплоть до полной тишины. Полноэкранный режим продолжает работать во время усиления.",
+    "chips": ["для каждой вкладки", "встроенный лимитер", "без сбора данных", "открытый код · GPL-3.0"]
+  },
+  "tr": {
+    "h1a": "Her sekmenin sesini yükseltin.",
+    "h1b": "6×'e kadar.",
+    "sub": "Ya da tamamen sessize inene dek kısın. Güçlendirme sırasında yerel tam ekran çalışmaya devam eder.",
+    "chips": ["sekme başına", "yerleşik sınırlayıcı", "veri toplanmaz", "açık kaynak · GPL-3.0"]
+  },
+  "ja": {
+    "h1a": "どのタブも、もっと大きな音で。",
+    "h1b": "最大6倍。",
+    "sub": "ミュートまで小さくすることも。ブースト中もネイティブの全画面表示はそのまま使えます。",
+    "chips": ["タブごとに設定", "リミッター内蔵", "データ収集なし", "オープンソース · GPL-3.0"]
+  },
+  "ko": {
+    "h1a": "어떤 탭이든 더 크게.",
+    "h1b": "최대 6배.",
+    "sub": "완전한 무음까지 줄일 수도 있습니다. 부스트 중에도 네이티브 전체 화면이 그대로 작동합니다.",
+    "chips": ["탭별 설정", "리미터 내장", "데이터 수집 없음", "오픈 소스 · GPL-3.0"]
+  },
+  "zh_CN": {
+    "h1a": "让任何标签页更响。",
+    "h1b": "最高 6 倍。",
+    "sub": "也能一路调小直至静音。增强时原生全屏依然可用。",
+    "chips": ["按标签页记忆", "内置限制器", "不收集数据", "开源 · GPL-3.0"]
+  },
+  "hi": {
+    "h1a": "किसी भी टैब की आवाज़ बढ़ाएँ।",
+    "h1b": "6× तक।",
+    "sub": "या बिल्कुल शांत होने तक घटाएँ। बूस्ट के दौरान नेटिव फ़ुलस्क्रीन चलता रहता है।",
+    "chips": ["हर टैब अलग", "बिल्ट-इन लिमिटर", "कोई डेटा संग्रह नहीं", "ओपन सोर्स · GPL-3.0"]
+  },
+  "id": {
+    "h1a": "Keraskan tab mana pun.",
+    "h1b": "Hingga 6×.",
+    "sub": "Atau kecilkan sampai benar-benar senyap. Layar penuh bawaan tetap berfungsi saat boost aktif.",
+    "chips": ["per tab", "limiter bawaan", "tanpa pengumpulan data", "sumber terbuka · GPL-3.0"]
+  }
+}

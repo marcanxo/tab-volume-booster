@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="{{LANG}}">
+<head>
+<meta charset="utf-8" />
+<style>
+  :root {
+    --bg: #0b0d12;
+    --panel: #131519;
+    --line: #2a2f38;
+    --text: #e7eaef;
+    --muted: #8b919e;
+    --blue: #6ea8fe;
+    --hot: #ff4d4d;              /* the popup's real accent at 6x, see colorFor() in popup.js */
+    --mono: "Cascadia Code", Consolas, Menlo, monospace;
+    --sans: "Segoe UI", "Yu Gothic UI", "Microsoft YaHei", "Malgun Gothic", "Nirmala UI", system-ui, sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body { width: 1280px; height: 800px; overflow: hidden; }
+
+  body {
+    font-family: var(--sans);
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+    background:
+      radial-gradient(90% 120% at 88% 78%, rgba(255, 77, 60, 0.12) 0%, rgba(255, 77, 60, 0) 55%),
+      radial-gradient(70% 100% at 8% 20%, rgba(110, 168, 254, 0.10) 0%, rgba(110, 168, 254, 0) 60%),
+      var(--bg);
+    position: relative;
+  }
+
+  /* faint grain, same trick as the popup itself */
+  body::after {
+    content: "";
+    position: absolute; inset: 0;
+    pointer-events: none;
+    opacity: 0.04;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='80' height='80'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  /* ---------- waveform backdrop ---------- */
+  #wave {
+    position: absolute; left: 0; right: 0; bottom: 96px;
+    height: 560px;
+    display: flex; align-items: flex-end; gap: 6px;
+    padding: 0 24px;
+    z-index: 1;
+  }
+  #wave .bar {
+    flex: 1;
+    border-radius: 3px 3px 0 0;
+  }
+
+  .baseline {
+    position: absolute; left: 0; right: 0;
+    bottom: 296px;              /* the 100% line */
+    border-top: 2px dashed rgba(139, 145, 158, 0.4);
+    z-index: 2;
+  }
+  .baseline .tag {
+    position: absolute; left: 24px; top: 10px;
+    font-family: var(--mono); font-size: 15px; letter-spacing: .08em;
+    color: var(--muted);
+  }
+
+  /* ---------- copy ---------- */
+  .eyebrow {
+    position: absolute; left: 64px; top: 56px;
+    display: flex; align-items: center; gap: 12px;
+    z-index: 4;
+  }
+  .eyebrow img { width: 30px; height: 30px; }
+  .eyebrow span {
+    font-family: var(--mono); font-size: 15px; font-weight: 600;
+    letter-spacing: .22em; text-transform: uppercase; color: var(--muted);
+  }
+
+  .copy {
+    position: absolute; left: 64px; top: 128px; width: 640px;
+    z-index: 4;
+  }
+  .copy h1 {
+    font-size: 76px; line-height: 1.04; font-weight: 800;
+    letter-spacing: -0.025em;
+  }
+  .copy h1 .loud {
+    color: var(--hot);
+    text-shadow: 0 0 44px rgba(255, 77, 77, 0.45);
+  }
+  .copy p {
+    margin-top: 26px;
+    font-size: 24px; line-height: 1.45; color: var(--muted);
+    max-width: 560px;
+  }
+
+  .chips {
+    position: absolute; left: 64px; bottom: 34px;
+    display: flex; gap: 12px;
+    z-index: 4;
+  }
+  .chips span {
+    font-family: var(--mono); font-size: 13.5px; letter-spacing: .02em;
+    color: var(--muted);
+    border: 1px solid var(--line); border-radius: 999px;
+    padding: 7px 15px;
+    background: rgba(11, 13, 18, 0.6);
+  }
+
+  /* ---------- popup mockup (styles lifted from the real popup.html, state: 6.0x) ---------- */
+  .popup-wrap {
+    position: absolute; right: 96px; top: 132px;
+    z-index: 3;
+    zoom: 1.62;
+    filter: drop-shadow(0 24px 48px rgba(0, 0, 0, 0.65));
+  }
+  .popup {
+    width: 268px;
+    background:
+      radial-gradient(120% 90% at 50% -10%, #1d2128 0%, var(--panel) 60%),
+      var(--panel);
+    border: 1px solid #262b34;
+    border-radius: 14px;
+    padding: 16px 16px 14px;
+    position: relative;
+    overflow: hidden;
+  }
+  .popup::after {
+    content: "";
+    position: absolute; inset: 0;
+    pointer-events: none; opacity: 0.035;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='80' height='80'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  .popup header { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
+  .popup .dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--hot); box-shadow: 0 0 10px var(--hot);
+  }
+  .popup .title {
+    font-size: 11px; letter-spacing: .16em; text-transform: uppercase;
+    color: var(--muted); font-weight: 600;
+  }
+  .popup .reset {
+    margin-left: auto;
+    background: none; border: 1px solid var(--line); color: var(--muted);
+    font-family: var(--mono); font-size: 9px; letter-spacing: .1em; text-transform: uppercase;
+    padding: 3px 8px; border-radius: 6px;
+  }
+
+  .popup .readout {
+    font-family: var(--mono);
+    font-size: 46px; font-weight: 600; line-height: 1; letter-spacing: -.02em;
+    color: var(--hot);
+    text-shadow: 0 0 22px rgba(255, 77, 77, 0.6);
+    display: flex; align-items: baseline; gap: 2px;
+    margin-bottom: 2px;
+  }
+  .popup .readout .x { font-size: 22px; color: var(--muted); font-weight: 500; }
+
+  .popup .sub { font-size: 11px; color: var(--muted); margin-bottom: 8px; }
+
+  .popup .mode {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 10.5px; letter-spacing: .03em; font-weight: 600;
+    padding: 4px 10px; border-radius: 999px;
+    border: 1px solid #2c5a45; color: #74e0a6;
+    margin-bottom: 16px;
+  }
+  .popup .mode .led {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: #74e0a6; box-shadow: 0 0 8px #74e0a6;
+  }
+
+  .popup .track {
+    width: 100%; height: 6px; border-radius: 6px;
+    background: var(--hot);      /* the real popup fills the track solid in the accent color */
+    position: relative;
+  }
+  .popup .thumb {
+    position: absolute; right: -2px; top: 50%;
+    width: 18px; height: 18px; border-radius: 50%;
+    transform: translateY(-50%);
+    background: #f2f4f8;
+    border: 3px solid var(--hot);
+    box-shadow: 0 2px 6px rgba(0,0,0,.5), 0 0 12px rgba(255, 77, 77, 0.6);
+  }
+
+  .popup .scale {
+    display: flex; justify-content: space-between;
+    font-family: var(--mono); font-size: 9.5px; color: #5a606b;
+    margin: 8px 1px 0;
+  }
+  .popup .scale .u { color: #aeb4bf; }
+
+  .popup .row {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-top: 16px; padding-top: 13px;
+    border-top: 1px solid var(--line);
+  }
+  .popup .row .label { font-size: 12px; color: var(--text); }
+  .popup .row .hint  { font-size: 10px; color: var(--muted); margin-top: 1px; }
+
+  .popup .toggle {
+    position: relative; width: 38px; height: 21px; flex: none;
+    border-radius: 21px; background: var(--hot); border: none;
+  }
+  .popup .toggle::after {
+    content: ""; position: absolute; top: 2px; left: 2px;
+    width: 17px; height: 17px; border-radius: 50%;
+    background: #f2f4f8; transform: translateX(17px);
+  }
+</style>
+</head>
+<body>
+
+  <div id="wave"></div>
+  <div class="baseline"><span class="tag">100%</span></div>
+
+  <div class="eyebrow">
+    <img src="{{ICON}}" alt="" />
+    <span>Tab Volume Booster</span>
+  </div>
+
+  <div class="copy">
+    <h1>{{H1A}}<br /><span class="loud">{{H1B}}</span></h1>
+    <p>{{SUB}}</p>
+  </div>
+
+  <div class="chips">
+    <span>{{CHIP1}}</span><span>{{CHIP2}}</span><span>{{CHIP3}}</span><span>{{CHIP4}}</span>
+  </div>
+
+  <div class="popup-wrap">
+    <div class="popup">
+      <header>
+        <span class="dot"></span>
+        <span class="title">Volume Booster</span>
+        <span class="reset">{{P_RESET}}</span>
+      </header>
+      <div class="readout">6.0<span class="x">&times;</span></div>
+      <div class="sub">youtube.com &middot; {{P_THISTAB}}</div>
+      <div class="mode"><span class="led"></span><span>{{P_MODE}}</span></div>
+      <div class="track"><span class="thumb"></span></div>
+      <div class="scale">
+        <span>0&times;</span><span class="u">{{P_SCALEOFF}}</span><span>6&times;</span>
+      </div>
+      <div class="row">
+        <div>
+          <div class="label">{{P_LIMITER}}</div>
+          <div class="hint">{{P_LIMITERHINT}}</div>
+        </div>
+        <span class="toggle"></span>
+      </div>
+    </div>
+  </div>
+
+<script>
+  // Deterministic waveform: quiet blue bars below the 100% line on the left,
+  // swelling past it toward hot red on the right. Color curve is ported from
+  // colorFor() in popup.js: 1x blue -> 3.5x orange -> 6x red. Same shape in
+  // every locale.
+  (function () {
+    var wave = document.getElementById("wave");
+    var N = 88;
+    var BASELINE = 200;          // px height of the 100% line above the wave's bottom edge
+    var MAX = 560;
+    function lerp(a, b, t) { return a + (b - a) * t; }
+    function heat(t) {
+      var r, g, b, k;
+      if (t < 0.5) {
+        k = t / 0.5;
+        r = Math.round(lerp(110, 255, k));
+        g = Math.round(lerp(168, 176, k));
+        b = Math.round(lerp(254, 64, k));
+      } else {
+        k = (t - 0.5) / 0.5;
+        r = 255;
+        g = Math.round(lerp(176, 77, k));
+        b = Math.round(lerp(64, 77, k));
+      }
+      return "rgb(" + r + "," + g + "," + b + ")";
+    }
+    for (var i = 0; i < N; i++) {
+      var t = i / (N - 1);
+      // pseudo-random but deterministic jitter
+      var jitter = 0.62 + 0.38 * Math.abs(Math.sin(i * 12.9898) * 43758.5453 % 1);
+      // envelope: stays under the baseline until ~55%, then swells past it
+      var env = t < 0.55
+        ? lerp(0.18, 0.95, t / 0.55) * BASELINE
+        : BASELINE * lerp(0.95, 1.0, (t - 0.55) / 0.45) + Math.pow((t - 0.55) / 0.45, 1.35) * (MAX - BASELINE);
+      var h = Math.max(10, env * jitter);
+      var bar = document.createElement("span");
+      bar.className = "bar";
+      bar.style.height = Math.round(h) + "px";
+      bar.style.background = "linear-gradient(to top, " + heat(t) + ", " + heat(Math.min(1, t + 0.12)) + ")";
+      bar.style.opacity = String(0.30 + 0.45 * t);
+      wave.appendChild(bar);
+    }
+  })();
+</script>
+</body>
+</html>

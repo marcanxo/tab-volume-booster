@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<style>
+  :root {
+    --bg: #0b0d12;
+    --line: #2a2f38;
+    --text: #e7eaef;
+    --muted: #8b919e;
+    --hot: #ff4d4d;
+    --mono: "Cascadia Code", Consolas, Menlo, monospace;
+    --sans: "Segoe UI", system-ui, sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body { width: 440px; height: 280px; overflow: hidden; }
+
+  body {
+    font-family: var(--sans);
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+    background:
+      radial-gradient(110% 130% at 92% 85%, rgba(255, 77, 60, 0.16) 0%, rgba(255, 77, 60, 0) 55%),
+      radial-gradient(80% 110% at 5% 10%, rgba(110, 168, 254, 0.12) 0%, rgba(110, 168, 254, 0) 60%),
+      var(--bg);
+    position: relative;
+  }
+
+  body::after {
+    content: "";
+    position: absolute; inset: 0;
+    pointer-events: none; opacity: 0.04;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='80' height='80'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  #wave {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    height: 200px;
+    display: flex; align-items: flex-end; gap: 4px;
+    padding: 0 12px;
+    z-index: 1;
+  }
+  #wave .bar { flex: 1; border-radius: 2px 2px 0 0; }
+
+  .baseline {
+    position: absolute; left: 0; right: 0;
+    bottom: 96px;
+    border-top: 1.5px dashed rgba(139, 145, 158, 0.4);
+    z-index: 2;
+  }
+  .baseline .tag {
+    position: absolute; left: 10px; top: 5px;
+    font-family: var(--mono); font-size: 9px; letter-spacing: .08em;
+    color: var(--muted);
+  }
+
+  .brand {
+    position: absolute; left: 26px; top: 24px;
+    display: flex; align-items: center; gap: 11px;
+    z-index: 4;
+  }
+  .brand img { width: 34px; height: 34px; }
+  .brand span {
+    font-size: 23px; font-weight: 800; letter-spacing: -0.02em;
+  }
+
+  .readout {
+    position: absolute; left: 26px; top: 84px;
+    font-family: var(--mono);
+    font-size: 96px; font-weight: 600; line-height: 1; letter-spacing: -.03em;
+    color: var(--hot);
+    text-shadow: 0 0 44px rgba(255, 77, 77, 0.5);
+    display: flex; align-items: baseline; gap: 4px;
+    z-index: 4;
+  }
+  .readout .x { font-size: 40px; color: var(--muted); font-weight: 500; }
+</style>
+</head>
+<body>
+
+  <div id="wave"></div>
+  <div class="baseline"><span class="tag">100%</span></div>
+
+  <div class="brand">
+    <img src="{{ICON}}" alt="" />
+    <span>Tab Volume Booster</span>
+  </div>
+
+  <div class="readout">6.0<span class="x">&times;</span></div>
+
+<script>
+  (function () {
+    var wave = document.getElementById("wave");
+    var N = 44;
+    var BASELINE = 96;
+    var MAX = 196;
+    function lerp(a, b, t) { return a + (b - a) * t; }
+    function heat(t) {
+      var r, g, b, k;
+      if (t < 0.5) {
+        k = t / 0.5;
+        r = Math.round(lerp(110, 255, k));
+        g = Math.round(lerp(168, 176, k));
+        b = Math.round(lerp(254, 64, k));
+      } else {
+        k = (t - 0.5) / 0.5;
+        r = 255;
+        g = Math.round(lerp(176, 77, k));
+        b = Math.round(lerp(64, 77, k));
+      }
+      return "rgb(" + r + "," + g + "," + b + ")";
+    }
+    for (var i = 0; i < N; i++) {
+      var t = i / (N - 1);
+      var jitter = 0.62 + 0.38 * Math.abs(Math.sin(i * 12.9898) * 43758.5453 % 1);
+      var env = t < 0.55
+        ? lerp(0.2, 0.95, t / 0.55) * BASELINE
+        : BASELINE * lerp(0.95, 1.0, (t - 0.55) / 0.45) + Math.pow((t - 0.55) / 0.45, 1.35) * (MAX - BASELINE);
+      var h = Math.max(6, env * jitter);
+      var bar = document.createElement("span");
+      bar.className = "bar";
+      bar.style.height = Math.round(h) + "px";
+      bar.style.background = "linear-gradient(to top, " + heat(t) + ", " + heat(Math.min(1, t + 0.12)) + ")";
+      bar.style.opacity = String(0.32 + 0.45 * t);
+      wave.appendChild(bar);
+    }
+  })();
+</script>
+</body>
+</html>
