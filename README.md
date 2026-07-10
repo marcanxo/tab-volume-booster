@@ -11,7 +11,7 @@ It's a *hybrid*: per tab it automatically picks the boosting method that preserv
 
 ## Features
 
-- **Boost _and_ reduce.** One centered slider: **1× = off** sits in the middle. Drag **right** to boost (up to **6×**), drag **left** to make it quieter (down to **0× = silent**). The whole left half is the quiet range with fine ~0.01 steps, so you can dial in something like `0.05×` - handy for ducking a backing track under a live instrument (e.g. Chordify).
+- **Boost _and_ reduce.** One centered slider: **1× = off** sits in the middle. Drag **right** to boost (up to **6×**), drag **left** to make it quieter (down to **0× = silent**). The whole left half is the quiet range with fine ~0.01 steps, so you can dial in something like `0.05×` - handy for ducking a backing track under a live instrument.
 - **Fullscreen preserved by default.** On YouTube and most HTML5 sites it hooks the page's own media element, so native fullscreen keeps working while boosting.
 - **Per-tab memory.** Each tab remembers its own level while it's open (including across YouTube's autoplay/next-video). Closing the tab forgets it. Nothing is shared between tabs.
 - **Survives reload.** After an F5 the level re-applies automatically - no need to reopen the popup (see [Notes](#notes--limits) for the exceptions).
