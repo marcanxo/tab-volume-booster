@@ -1,0 +1,15 @@
+O Tab Volume Booster permite deixar qualquer aba do navegador mais alta (até 6x) ou mais baixa, até o silêncio total, com um único controle deslizante.
+
+• Aumente para além de 100% vídeos, chamadas, aulas ou transmissões com som baixo.
+• Deixe a base MAIS BAIXA que o seu instrumento: perfeito para tocar junto, quando você quer a música baixinha por trás do seu violão.
+• Compatível com tela cheia: no YouTube e na maioria dos sites, o ajuste é feito no áudio da própria página, então a tela cheia nativa continua funcionando mesmo com o aumento ativo.
+• Por aba: cada aba lembra o próprio nível; nada é compartilhado, e tudo é esquecido quando você fecha a aba.
+• Robusto: sobrevive a recarregamentos da página e à transição de “próximo episódio”, acompanha o vídeo mesmo quando o player é trocado e tem um limitador embutido para conter a distorção em aumentos fortes.
+• Um clique para redefinir e voltar ao normal.
+• Disponível em 14 idiomas. As traduções são contribuições da comunidade; veja o repositório no GitHub para adicionar a sua.
+
+Privacidade: funciona totalmente no seu dispositivo. Sem requisições de rede, sem análise de uso, sem anúncios, sem coleta de dados.
+
+Código aberto (GPL-3.0): https://github.com/marcanxo/tab-volume-booster
+
+Observação: sites protegidos por DRM (Netflix, Spotify, Disney+ etc.) não podem ser ajustados na própria página, então o aumento é feito via modo captura; nesses sites, a tela cheia fica indisponível enquanto o aumento estiver ativo.

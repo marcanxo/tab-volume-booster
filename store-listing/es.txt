@@ -1,0 +1,15 @@
+Tab Volume Booster te permite subir el volumen de cualquier pestaña del navegador (hasta 6x) o bajarlo hasta el silencio total, todo con un solo control deslizante.
+
+• Amplifica por encima del 100% videos, llamadas, clases o transmisiones que suenan demasiado bajo.
+• Baja una pista de acompañamiento por debajo de tu instrumento: ideal para practicar encima, cuando quieres oír la canción de fondo, por debajo de tu guitarra.
+• Compatible con la pantalla completa: en YouTube y en la mayoría de los sitios ajusta el audio de la propia página, así que la pantalla completa nativa sigue funcionando mientras amplificas.
+• Por pestaña: cada pestaña recuerda su propio nivel; no se comparte nada y se olvida al cerrar la pestaña.
+• Robusto: sobrevive a las recargas de página y a las transiciones de «siguiente episodio», sigue el video incluso cuando se reemplaza el reproductor e incluye un limitador integrado para controlar la distorsión en amplificaciones fuertes.
+• Un clic para restablecer el volumen normal.
+• Disponible en 14 idiomas. Las traducciones son contribuciones de la comunidad; visita el repositorio de GitHub para añadir la tuya.
+
+Privacidad: funciona por completo en tu dispositivo. Sin solicitudes de red, sin analíticas, sin anuncios y sin recopilar datos.
+
+Código abierto (GPL-3.0): https://github.com/marcanxo/tab-volume-booster
+
+Nota: en los sitios protegidos con DRM (Netflix, Spotify, Disney+, etc.) no se puede ajustar el audio dentro de la página, así que se amplifican mediante el modo captura; ahí la pantalla completa no está disponible mientras se amplifica.

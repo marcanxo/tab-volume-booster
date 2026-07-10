@@ -1,0 +1,15 @@
+Tab Volume Booster ti permette di alzare il volume di qualsiasi scheda del browser (fino a 6x) o di abbassarlo, fino al silenzio totale, con un solo cursore.
+
+• Alza sopra il 100% video, chiamate, lezioni o stream troppo bassi.
+• Abbassa la base musicale sotto il tuo strumento: perfetto per esercitarti suonandoci sopra, quando vuoi la canzone in sottofondo rispetto alla tua chitarra.
+• Compatibile con lo schermo intero: su YouTube e sulla maggior parte dei siti regola direttamente l'audio della pagina, così lo schermo intero nativo continua a funzionare anche durante il boost.
+• Per scheda: ogni scheda ricorda il proprio livello; nulla viene condiviso e tutto viene dimenticato quando chiudi la scheda.
+• Robusto: sopravvive ai ricaricamenti della pagina e al passaggio all'“episodio successivo”, segue il video anche quando il player viene sostituito e include un limiter integrato per contenere la distorsione ai boost più spinti.
+• Torni al volume normale con un clic.
+• Disponibile in 14 lingue. Le traduzioni sono contributi della community: per aggiungere la tua, dai un'occhiata al repo GitHub.
+
+Privacy: funziona interamente sul tuo dispositivo. Nessuna richiesta di rete, niente analytics, niente pubblicità, nessun dato raccolto.
+
+Open source (GPL-3.0): https://github.com/marcanxo/tab-volume-booster
+
+Nota: i siti protetti da DRM (Netflix, Spotify, Disney+, ecc.) non possono essere regolati direttamente nella pagina, quindi il boost avviene tramite la modalità cattura; in quel caso lo schermo intero non è disponibile durante il boost.

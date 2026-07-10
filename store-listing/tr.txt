@@ -1,0 +1,15 @@
+Tab Volume Booster, herhangi bir tarayıcı sekmesinin sesini tek bir kaydırıcıyla 6x'e kadar artırmanıza ya da tamamen sessize inene dek kısmanıza olanak tanır.
+
+• Sessiz videoları, görüşmeleri, dersleri veya yayınları %100'ün üzerine çıkarın.
+• Altyapıyı enstrümanınızın altında kalacak kadar KISIN: şarkının gitarınızın gerisinde hafif duyulmasını istediğiniz eşlikli pratikler için biçilmiş kaftan.
+• Tam ekran dostu: YouTube'da ve çoğu sitede sayfanın kendi sesini ayarlar; böylece ses artırılmışken yerel tam ekran çalışmaya devam eder.
+• Sekme başına: her sekme kendi düzeyini hatırlar; hiçbir şey paylaşılmaz ve sekmeyi kapattığınızda unutulur.
+• Dayanıklı: sayfa yenilemelerini ve “sonraki bölüm” geçişlerini sorunsuz atlatır, oynatıcı değiştirilse bile videoyu takip eder ve güçlü artırmalarda ses bozulmasını dizginleyen yerleşik bir sınırlayıcı içerir.
+• Tek tıkla normale sıfırlama.
+• 14 dilde kullanılabilir. Çeviriler topluluk katkısıdır; kendi dilinizi eklemek için GitHub deposuna göz atın.
+
+Gizlilik: tamamen cihazınızda çalışır. Ağ isteği yok, analitik yok, reklam yok, veri toplanmaz.
+
+Açık kaynak (GPL-3.0): https://github.com/marcanxo/tab-volume-booster
+
+Not: DRM korumalı sitelerde (Netflix, Spotify, Disney+ vb.) ses sayfa içinden ayarlanamaz; bu yüzden buralarda artırma yakalama modu üzerinden yapılır ve ses artırılmışken tam ekran kullanılamaz.

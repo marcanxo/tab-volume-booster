@@ -1,0 +1,15 @@
+Tab Volume Booster macht jeden Browser-Tab lauter (bis zu 6x) oder leiser, bis hin zur völligen Stille, alles mit einem einzigen Schieberegler.
+
+• Verstärke leise Videos, Anrufe, Vorlesungen oder Streams auf über 100%.
+• Dreh einen Backing-Track LEISER als dein Instrument: perfekt zum Mitüben, wenn der Song leise unter deiner Gitarre liegen soll.
+• Vollbildfreundlich: Auf YouTube und den meisten Seiten wird der Ton der Seite selbst geregelt, natives Vollbild funktioniert also auch mit Boost weiter.
+• Pro Tab: Jeder Tab merkt sich seinen eigenen Pegel; nichts wird zwischen Tabs geteilt, und beim Schließen des Tabs ist alles wieder vergessen.
+• Robust: übersteht das Neuladen der Seite und den Wechsel zur „nächsten Folge“, folgt dem Video selbst dann, wenn der Player ausgetauscht wird, und ein eingebauter Limiter reduziert Verzerrungen bei starkem Boost.
+• Mit einem Klick zurück auf normale Lautstärke.
+• In 14 Sprachen verfügbar. Die Übersetzungen stammen aus der Community; wie du deine beisteuern kannst, steht im GitHub-Repo.
+
+Datenschutz: Läuft komplett auf deinem Gerät. Keine Netzwerkanfragen, kein Tracking, keine Werbung, keine Datenerfassung.
+
+Open Source (GPL-3.0): https://github.com/marcanxo/tab-volume-booster
+
+Hinweis: DRM-geschützte Seiten (Netflix, Spotify, Disney+ usw.) lassen sich nicht direkt auf der Seite regeln und werden deshalb im Aufnahmemodus verstärkt; während des Boosts ist dort kein Vollbild möglich.

@@ -1,0 +1,15 @@
+Tab Volume Booster pozwala jednym suwakiem zwiększyć głośność dowolnej karty przeglądarki (do 6x) albo ją ściszyć, aż do zupełnej ciszy.
+
+• Wzmacniaj ciche filmy, rozmowy, wykłady i transmisje powyżej 100%.
+• Ścisz podkład poniżej głośności swojego instrumentu: świetne do ćwiczenia z nagraniem, gdy utwór ma grać ciszej niż twoja gitara.
+• Przyjazny dla pełnego ekranu: na YouTube i większości stron reguluje dźwięk samej strony, dzięki czemu natywny pełny ekran działa nawet podczas wzmocnienia.
+• Osobno dla każdej karty: każda karta pamięta własny poziom; nic nie jest współdzielone między kartami, a po zamknięciu karty ustawienie znika.
+• Niezawodny: przetrwa przeładowania strony i przejścia w stylu „następny odcinek”, podąża za wideo nawet po podmianie odtwarzacza, a wbudowany limiter redukuje zniekształcenia przy mocnym wzmocnieniu.
+• Powrót do normalnej głośności jednym kliknięciem.
+• Dostępny w 14 językach. Tłumaczenia tworzy społeczność, zajrzyj do repozytorium na GitHubie, aby dodać swoje.
+
+Prywatność: działa w całości na twoim urządzeniu. Żadnych połączeń sieciowych, żadnej analityki, żadnych reklam, żadnego zbierania danych.
+
+Otwarty kod źródłowy (GPL-3.0): https://github.com/marcanxo/tab-volume-booster
+
+Uwaga: strony chronione DRM (Netflix, Spotify, Disney+ itd.) nie pozwalają na regulację dźwięku w samej stronie, więc wzmocnienie działa tam przez tryb przechwytywania; podczas wzmocnienia pełny ekran jest na nich niedostępny.

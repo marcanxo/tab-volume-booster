@@ -1,0 +1,15 @@
+Tab Volume Booster vous permet de monter le son de n'importe quel onglet du navigateur (jusqu'à 6x) ou de le baisser, jusqu'au silence complet, avec un seul curseur.
+
+• Boostez au-delà de 100% les vidéos, appels, cours ou streams trop faibles.
+• Baissez un playback en dessous de votre instrument : idéal pour travailler vos morceaux, quand vous voulez la chanson discrète sous votre guitare.
+• Compatible plein écran : sur YouTube et la plupart des sites, le volume est réglé directement sur l'audio de la page, si bien que le plein écran natif continue de fonctionner pendant le boost.
+• Par onglet : chaque onglet mémorise son propre niveau ; rien n'est partagé, et tout est oublié dès que vous fermez l'onglet.
+• Robuste : survit aux rechargements de page et au passage à l'« épisode suivant », suit la vidéo même quand le lecteur est remplacé, et intègre un limiteur qui atténue la distorsion en cas de boost élevé.
+• Retour au volume normal en un clic.
+• Disponible en 14 langues. Les traductions sont des contributions de la communauté ; rendez-vous sur le dépôt GitHub pour ajouter la vôtre.
+
+Confidentialité : tout fonctionne sur votre appareil. Aucune requête réseau, aucune mesure d'audience, aucune publicité, aucune donnée collectée.
+
+Open source (GPL-3.0) : https://github.com/marcanxo/tab-volume-booster
+
+Remarque : sur les sites protégés par DRM (Netflix, Spotify, Disney+, etc.), l'audio ne peut pas être réglé directement dans la page ; le boost passe alors par le mode capture, et le plein écran y est indisponible pendant le boost.
