@@ -121,6 +121,10 @@
   }
 
   // Watch the analyser briefly; resolve true if real signal appears.
+  // An element that is muted/zero-volume/paused RIGHT NOW is silent by construction - waiting the
+  // full window would only stall the worker's restore lock for a result we already know. The
+  // analyser only confirms audio for display (it never decides), so a short look suffices there.
+  const measureBudget = (el) => (el.muted || el.volume === 0 || el.paused ? 150 : 1200);
   function measure(timeout = 1200) {
     return new Promise((res) => {
       const buf = new Float32Array(S.analyser.fftSize);
@@ -211,13 +215,34 @@
   // Every frame watches its own subtree for media/iframe swaps and nudges the
   // worker, which no-ops instantly unless this tab actually has a level set.
   let navPingTimer = null;
+  let navPingAt = 0;       // when the pending send will fire (perf.now() clock)
   let lastNavPing = -2000; // negative: the FIRST ping must not be rate-capped against the frame's time origin
+  let urgentBudget = 3;    // urgent escalations left in the current window
+  let urgentReset = 0;     // when the budget refills (perf.now() clock)
   const volWatched = new WeakSet(); // elements with a one-shot volumechange re-check armed
-  function pingNavigated() {
-    if (navPingTimer) return; // a send is already scheduled - it covers this signal too
+  function pingNavigated(urgent) {
     // Debounce bursts AND cap the rate: media DOM churn (ad rotations, lazy players) would
     // otherwise wake the MV3 service worker over and over, even when nothing is boosted.
-    const wait = Math.max(250, 2000 - (performance.now() - lastNavPing));
+    // urgent === true marks the exact moment a refused engage can finally succeed (an unmute,
+    // a first gesture): those skip the churn cooldown and get the 250ms floor - the sources are
+    // one-shot armed (volWatched / gestureArmed), so they can't storm. `=== true` matters:
+    // popstate/hashchange pass an Event object here and must stay non-urgent.
+    const now = performance.now();
+    // Urgency is token-budgeted (3 per rolling 10s per frame): the legit sources fire once per real
+    // user interaction, but a hostile page could flap `muted` (or spam events) to re-arm them at the
+    // engage roundtrip rate - once the budget is spent, escalations degrade to the churn wait, which
+    // is exactly the pre-1.1.2 worker load ceiling.
+    if (urgent === true) {
+      if (now > urgentReset) { urgentBudget = 3; urgentReset = now + 10000; }
+      if (urgentBudget > 0) urgentBudget--; else urgent = false;
+    }
+    const wait = urgent === true ? 250 : Math.max(250, 2000 - (now - lastNavPing));
+    const at = now + wait;
+    if (navPingTimer) {
+      if (at >= navPingAt) return; // the pending send fires sooner anyway - it covers this signal
+      clearTimeout(navPingTimer);  // urgent: pull the pending send forward, never push it back
+    }
+    navPingAt = at;
     navPingTimer = setTimeout(() => {
       navPingTimer = null;
       lastNavPing = performance.now();
@@ -232,11 +257,14 @@
   function armGestureRetry() {
     if (gestureArmed) return;
     gestureArmed = true;
-    const once = () => {
+    const once = (e) => {
+      // Page-dispatched synthetic events grant NO user activation - the retried engage would just
+      // refuse 'suspended' again, so don't let them consume the one-shot or burn an urgent token.
+      if (!e.isTrusted) return;
       gestureArmed = false;
       window.removeEventListener("pointerdown", once, true);
       window.removeEventListener("keydown", once, true);
-      pingNavigated();
+      pingNavigated(true); // the gesture just unlocked audio - don't sit out the churn cooldown
     };
     window.addEventListener("pointerdown", once, true);
     window.addEventListener("keydown", once, true);
@@ -289,7 +317,14 @@
         // the only thing blocking the switch, re-check the moment its volume state changes.
         if (curIdle && nextPlaying && !volWatched.has(next)) {
           volWatched.add(next);
-          const once = () => { next.removeEventListener("volumechange", once); volWatched.delete(next); pingNavigated(); };
+          // Urgent only if the blocking state actually CLEARED: volumechange also fires for volume
+          // wiggles on a still-muted element (players re-asserting a saved level), and those must
+          // stay on the 2s churn path or the arm→ping→refuse→re-arm cycle would spin at the floor.
+          const once = () => {
+            next.removeEventListener("volumechange", once);
+            volWatched.delete(next);
+            pingNavigated(!next.muted && next.volume > 0);
+          };
           next.addEventListener("volumechange", once);
         }
         S.gain.gain.setTargetAtTime(gain, S.ctx.currentTime, 0.02);
@@ -313,7 +348,7 @@
       applyLimiter(S.useLimiter, false);
       S.engaged = true;
       watchElement(el);
-      const mm = await measure();
+      const mm = await measure(measureBudget(el));
       return { ok: true, engaged: true, signal: mm.signal };
     }
 
@@ -365,7 +400,7 @@
     S.engaged = true;
     watchElement(el);
 
-    const m = await measure();
+    const m = await measure(measureBudget(el));
     return { ok: true, engaged: true, signal: m.signal };
   }
 
@@ -412,7 +447,8 @@
             safe: a.safe,
             reason: a.reason,
             area: Math.max(0, r.width) * Math.max(0, r.height),
-            playing: !el.paused && !el.ended && el.readyState >= 2
+            playing: !el.paused && !el.ended && el.readyState >= 2,
+            audible: !el.muted && el.volume > 0
           }
         });
       } catch (_) {}

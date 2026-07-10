@@ -110,12 +110,28 @@ async function predictMode(tabId) {
   return new Promise((resolve) => {
     const id = ++probeSeq;
     const st = { tabId, cands: [] };
-    probeWaiters.set(id, st);
-    st.timer = setTimeout(() => {
+    const settle = () => {
+      clearTimeout(st.timer);
+      clearTimeout(st.grace);
       probeWaiters.delete(id); // delete OUR entry only - never a concurrent probe's
       const best = pickBest(st.cands);
       resolve(best ? { mode: "element", frameId: best.frameId } : { mode: "capture" });
-    }, 350);
+    };
+    probeWaiters.set(id, st);
+    st.timer = setTimeout(settle, 350); // ceiling for pages whose frames answer slowly or not at all
+    // Early-resolve, deliberately narrow: ONLY an audibly-playing safe element in the TOP frame may
+    // settle the window early (after a 50ms grace for stragglers). Anything less - muted previews,
+    // ad iframes, any sub-frame - waits the full 350ms exactly as before, because settling early on
+    // a fast small frame would EXCLUDE a slower main-player frame from pickBest entirely, and an
+    // engage that then SUCCEEDS on the wrong frame is sticky (mode + frameId persist). A top-frame
+    // audible playing element losing to a bigger audible iframe answering later is the one case this
+    // trades away - two simultaneously audible players is pathological, and the old multi-frame area
+    // bias is an accepted residual anyway. This keeps the fast path for the cases that matter
+    // (YouTube, X: player in the top frame) at zero behavior change for iframe-player sites.
+    st.onCand = (frameId, cand) => {
+      if (st.grace || frameId !== 0 || !(cand.playing && cand.safe && cand.audible)) return;
+      st.grace = setTimeout(settle, 50);
+    };
     chrome.tabs.sendMessage(tabId, { cmd: "probe" }).catch(() => {}); // broadcasts to all frames
   });
 }
@@ -245,7 +261,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (tabId != null) {
       // Fan out to every in-flight probe for this tab (there can be more than one).
       for (const st of probeWaiters.values()) {
-        if (st.tabId === tabId) st.cands.push({ frameId: sender.frameId, cand: msg.cand });
+        if (st.tabId === tabId) {
+          st.cands.push({ frameId: sender.frameId, cand: msg.cand });
+          if (st.onCand) st.onCand(sender.frameId, msg.cand);
+        }
       }
     }
     return;
