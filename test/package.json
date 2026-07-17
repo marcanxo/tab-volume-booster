@@ -1,0 +1,11 @@
+{
+  "name": "tab-volume-booster-tests",
+  "private": true,
+  "description": "End-to-end test harness: loads the extension in real Chrome and drives an X-like fixture feed.",
+  "scripts": {
+    "test": "node run.js"
+  },
+  "devDependencies": {
+    "puppeteer-core": "^23.0.0"
+  }
+}

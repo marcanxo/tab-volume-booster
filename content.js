@@ -219,14 +219,14 @@
   let lastNavPing = -2000; // negative: the FIRST ping must not be rate-capped against the frame's time origin
   let urgentBudget = 3;    // urgent escalations left in the current window
   let urgentReset = 0;     // when the budget refills (perf.now() clock)
-  const volWatched = new WeakSet(); // elements with a one-shot volumechange re-check armed
   function pingNavigated(urgent) {
     // Debounce bursts AND cap the rate: media DOM churn (ad rotations, lazy players) would
     // otherwise wake the MV3 service worker over and over, even when nothing is boosted.
-    // urgent === true marks the exact moment a refused engage can finally succeed (an unmute,
-    // a first gesture): those skip the churn cooldown and get the 250ms floor - the sources are
-    // one-shot armed (volWatched / gestureArmed), so they can't storm. `=== true` matters:
-    // popstate/hashchange pass an Event object here and must stay non-urgent.
+    // urgent === true marks the exact moment a refused engage can finally succeed (an element
+    // becoming audibly playing, a first gesture): those skip the churn cooldown and get the
+    // 250ms floor - storm protection comes from the token budget below plus the gesture
+    // handler's one-shot arming. `=== true` matters: popstate/hashchange pass an Event object
+    // here and must stay non-urgent.
     const now = performance.now();
     // Urgency is token-budgeted (3 per rolling 10s per frame): the legit sources fire once per real
     // user interaction, but a hostile page could flap `muted` (or spam events) to re-arm them at the
@@ -291,6 +291,17 @@
   swapMo.observe(document.documentElement, {
     childList: true, subtree: true, attributes: true, attributeFilter: ["src"]
   });
+  // Unmutes are INVISIBLE to the observer above: muted/volume are properties, not attributes.
+  // volumechange doesn't bubble, but a CAPTURE listener on an ancestor still sees it - one
+  // document-level listener covers every media element, present or future. Urgent only when the
+  // element just became actionable (audibly playing); wiggles on muted/paused elements take the
+  // churn path. Our own hooked element is skipped: its gain node already applies.
+  document.addEventListener("volumechange", (e) => {
+    const el = e.target;
+    if (!el || el.tagName !== "VIDEO" && el.tagName !== "AUDIO") return;
+    if (el === S.el) return;
+    pingNavigated(!el.muted && el.volume > 0 && !el.paused);
+  }, true);
   // SPA route changes that fire DOM-visible events. (history.pushState is invisible
   // from this isolated world - the worker catches those via tabs.onUpdated url changes.)
   window.addEventListener("popstate", pingNavigated);
@@ -313,20 +324,9 @@
       // keeps "playing" forever and the real player would resume at native volume.
       const nextAudible = nextPlaying && !next.muted && next.volume > 0;
       if (!(curIdle && nextAudible)) {
-        // A fresh episode's video often autoplays MUTED and unmutes a beat later. If muteness is
-        // the only thing blocking the switch, re-check the moment its volume state changes.
-        if (curIdle && nextPlaying && !volWatched.has(next)) {
-          volWatched.add(next);
-          // Urgent only if the blocking state actually CLEARED: volumechange also fires for volume
-          // wiggles on a still-muted element (players re-asserting a saved level), and those must
-          // stay on the 2s churn path or the arm→ping→refuse→re-arm cycle would spin at the floor.
-          const once = () => {
-            next.removeEventListener("volumechange", once);
-            volWatched.delete(next);
-            pingNavigated(!next.muted && next.volume > 0);
-          };
-          next.addEventListener("volumechange", once);
-        }
+        // A fresh episode's video often autoplays MUTED and unmutes a beat later. The document-
+        // level volumechange capture listener (below the swapMo setup) re-pings the moment any
+        // element's volume state changes, so nothing needs to be armed per element here.
         S.gain.gain.setTargetAtTime(gain, S.ctx.currentTime, 0.02);
         applyLimiter(S.useLimiter, false);
         return { ok: true, engaged: true };

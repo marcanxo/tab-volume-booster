@@ -9,3 +9,8 @@ desktop.ini
 
 # Packaging output (e.g. a zip for "Load unpacked" / Web Store)
 *.zip
+
+# Test harness dependencies
+test/node_modules/
+test/package-lock.json
+test/.browsers/

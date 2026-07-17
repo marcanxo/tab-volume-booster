@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>x-feed fixture</title>
+<style>
+  body { background: #15202b; color: #eee; font-family: sans-serif; margin: 0; padding: 20px; }
+  .post { margin: 0 auto 24px; max-width: 560px; }
+  video { width: 100%; height: 315px; background: #000; display: block; }
+</style>
+</head>
+<body>
+<div id="feed"></div>
+<script>
+  // Mimics the X timeline: videos autoplay MUTED (blob: src, like MSE), a click on the video
+  // unmutes it, and "scrolling" swaps posts in and out of the DOM (virtualized list).
+  // The test runner drives this via window.feed.*; clicks come in as REAL trusted input events.
+  (async function () {
+    const toneBlobUrl = URL.createObjectURL(await (await fetch("/tone.wav")).blob());
+    let seq = 0;
+
+    function makePost(opts) {
+      const o = opts || {};
+      const post = document.createElement("div");
+      post.className = "post";
+      const v = document.createElement("video");
+      v.id = "v" + (++seq);
+      v.src = toneBlobUrl;         // blob: like X's MSE-backed players
+      v.loop = true;
+      v.playsInline = true;
+      v.muted = o.muted !== false; // default: muted autoplay, like the timeline
+      // Click-to-unmute exactly like X: property writes only - NO attribute changes, NO DOM
+      // mutation. This is the interesting part for the extension: an unmute is invisible to
+      // MutationObservers.
+      v.addEventListener("click", () => {
+        v.muted = false;
+        v.volume = 1;
+        if (v.paused) v.play();
+      });
+      post.appendChild(v);
+      document.getElementById("feed").appendChild(post);
+      v.play().catch(() => {});
+      return v;
+    }
+
+    window.feed = {
+      // add a muted autoplaying post (returns the video's id)
+      add() { return makePost({}).id; },
+      // add an audibly-playing post
+      addAudible() { return makePost({ muted: false }).id; },
+      // remove a post from the DOM (virtualization scroll-out)
+      remove(id) {
+        const v = document.getElementById(id);
+        if (v) v.closest(".post").remove();
+      },
+      // pause a video WITHOUT any DOM change (X pauses off-screen videos)
+      pause(id) {
+        const v = document.getElementById(id);
+        if (v) v.pause();
+      },
+      state(id) {
+        const v = document.getElementById(id);
+        if (!v) return null;
+        return { paused: v.paused, muted: v.muted, volume: v.volume, connected: v.isConnected };
+      },
+      rect(id) {
+        const v = document.getElementById(id);
+        if (!v) return null;
+        const r = v.getBoundingClientRect();
+        return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+      }
+    };
+    window.feedReady = true;
+  })();
+</script>
+</body>
+</html>
