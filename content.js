@@ -31,10 +31,9 @@
     return c;
   }
 
-  // Choose the most likely "real" media element: prefer playing, then audible, then biggest.
-  function pickElement() {
+  // Rank media elements: prefer playing, then audible, then biggest.
+  function rankElements() {
     const els = Array.from(document.querySelectorAll("video, audio"));
-    if (!els.length) return null;
     const scored = els.map((el) => {
       const r = el.getBoundingClientRect();
       return {
@@ -45,7 +44,12 @@
       };
     });
     scored.sort((a, b) => b.playing - a.playing || b.audible - a.audible || b.area - a.area);
-    return scored[0].el;
+    return scored;
+  }
+  // The most likely "real" media element right now.
+  function pickElement() {
+    const scored = rankElements();
+    return scored.length ? scored[0].el : null;
   }
 
   // Non-destructive: decide if this element is safe to hook WITHOUT touching it.
@@ -323,7 +327,12 @@
       // steal the hook from a merely-paused main video - that would be sticky, since the loop
       // keeps "playing" forever and the real player would resume at native volume.
       const nextAudible = nextPlaying && !next.muted && next.volume > 0;
-      if (!(curIdle && nextAudible)) {
+      // HOOKABLE is required too: an audible cross-origin ad video during an ad break would
+      // otherwise open the gate, retire the content's live hook, and then be REFUSED by the
+      // fresh path's assess - content unboosted, worker falling back to capture (fullscreen
+      // lost) for the ad's lifetime. Unhookable interlopers just play at native volume.
+      const nextHookable = nextAudible && assess(next).safe;
+      if (!(curIdle && nextHookable)) {
         // A fresh episode's video often autoplays MUTED and unmutes a beat later. The document-
         // level volumechange capture listener (below the swapMo setup) re-pings the moment any
         // element's volume state changes, so nothing needs to be armed per element here.
@@ -433,9 +442,18 @@
 
     if (msg.cmd === "probe") {
       // Non-destructive capability report. Frames with no element stay silent.
-      const el = pickElement();
+      let el = pickElement();
       if (!el) return;
-      const a = assess(el);
+      let a = assess(el);
+      // If the top pick is unhookable, it may be a transient interloper (a cross-origin ad
+      // video playing over the paused content player). Mode prediction should see the best
+      // SAFE element when one exists - engage() re-verifies against the live DOM anyway, and
+      // pages whose ONLY media is unhookable (DRM) still report that honestly below.
+      let substituted = false;
+      if (!a.safe) {
+        const alt = rankElements().find((s) => assess(s.el).safe);
+        if (alt) { el = alt.el; a = assess(el); substituted = true; }
+      }
       // Warm the redirect check now (fire-and-forget) so a following engage hits the cache.
       if (a.safe && a.reason === "same-origin") sameOriginChainOk(el.currentSrc || el.src);
       const r = el.getBoundingClientRect();
@@ -448,7 +466,10 @@
             reason: a.reason,
             area: Math.max(0, r.width) * Math.max(0, r.height),
             playing: !el.paused && !el.ended && el.readyState >= 2,
-            audible: !el.muted && el.volume > 0
+            audible: !el.muted && el.volume > 0,
+            // a stand-in for an unhookable top pick: fine for mode prediction, but the worker
+            // must not let it shortcut the probe window (see predictMode's early-resolve gate)
+            substituted
           }
         });
       } catch (_) {}

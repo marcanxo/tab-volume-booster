@@ -25,7 +25,7 @@
       post.className = "post";
       const v = document.createElement("video");
       v.id = "v" + (++seq);
-      v.src = toneBlobUrl;         // blob: like X's MSE-backed players
+      v.src = o.src || toneBlobUrl; // blob: like X's MSE-backed players (or a cross-origin ad URL)
       v.loop = true;
       v.playsInline = true;
       v.muted = o.muted !== false; // default: muted autoplay, like the timeline
@@ -68,6 +68,35 @@
         if (!v) return null;
         const r = v.getBoundingClientRect();
         return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+      },
+      // IMA-SDK-style ad break: pause the content video, overlay a SEPARATE audible ad
+      // element. crossOrigin:true serves the ad from another origin with no CORS headers -
+      // the case the extension can never hook in-page.
+      async adStart(mainId, opts) {
+        const o = opts || {};
+        window.feed.pause(mainId);
+        let src;
+        if (o.crossOrigin) src = (await (await fetch("/adsrc")).text()).trim();
+        const ad = makePost({ muted: false, src });
+        return ad.id;
+      },
+      // attach real (ClearKey) MediaKeys to a video so it reads as DRM to capability checks
+      async makeDrm(id) {
+        const v = document.getElementById(id);
+        const access = await navigator.requestMediaKeySystemAccess("org.w3.clearkey", [{
+          initDataTypes: ["keyids"],
+          audioCapabilities: [{ contentType: 'audio/mp4; codecs="mp4a.40.2"' }],
+          videoCapabilities: [{ contentType: 'video/mp4; codecs="avc1.42E01E"' }]
+        }]);
+        const mk = await access.createMediaKeys();
+        await v.setMediaKeys(mk);
+        return !!v.mediaKeys;
+      },
+      // ad break ends: ad element is torn down, content resumes
+      adEnd(adId, mainId) {
+        window.feed.remove(adId);
+        const main = document.getElementById(mainId);
+        if (main) { main.muted = false; main.volume = 1; main.play(); }
       }
     };
     window.feedReady = true;

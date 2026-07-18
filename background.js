@@ -129,7 +129,9 @@ async function predictMode(tabId) {
     // bias is an accepted residual anyway. This keeps the fast path for the cases that matter
     // (YouTube, X: player in the top frame) at zero behavior change for iframe-player sites.
     st.onCand = (frameId, cand) => {
-      if (st.grace || frameId !== 0 || !(cand.playing && cand.safe && cand.audible)) return;
+      // cand.substituted = a stand-in reported because the frame's top-ranked element is
+      // unhookable; it may win pickBest after the full window but must never shortcut it.
+      if (st.grace || frameId !== 0 || cand.substituted || !(cand.playing && cand.safe && cand.audible)) return;
       st.grace = setTimeout(settle, 50);
     };
     chrome.tabs.sendMessage(tabId, { cmd: "probe" }).catch(() => {}); // broadcasts to all frames
@@ -391,6 +393,16 @@ async function restoreAfterLoad(tabId, gain, useLimiter, prior) {
       // The element can't be hooked safely (same-origin URL redirecting cross-origin): retrying
       // can't change that - fall back to capture (no conflict), exactly like setGain would.
       if (res && res.reason === "cross-origin-redirect") {
+        await applyCaptureOrPause(tabId, g, useLimiter, false);
+        await reverifyGain(tabId, g, useLimiter, false);
+        return;
+      }
+      // DRM (or an unparseable src) can't become hookable by waiting either. Without this,
+      // a DRM page holding one safe decoy element would keep predicting 'element' via the
+      // probe's substitution all 8 iterations - grinding probes and leaving a wrong mode
+      // record. ('cross-origin-no-cors' deliberately stays in the wait bucket: during an ad
+      // break that's a transient interloper and waiting is exactly right.)
+      if (res && (res.reason === "drm" || res.reason === "bad-url")) {
         await applyCaptureOrPause(tabId, g, useLimiter, false);
         await reverifyGain(tabId, g, useLimiter, false);
         return;
