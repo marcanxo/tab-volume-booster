@@ -77,7 +77,7 @@ You can always install straight from source - no store needed (requires Chrome 1
 
 ## Notes & limits
 
-- **DRM audio** (Netflix, Disney+, Spotify web, Prime, etc.) can't be boosted by any method - the browser won't route protected audio through Web Audio or capture.
+- **DRM sites** (Netflix, Disney+, Spotify web, Prime, etc.) can't be adjusted in-page, so they're boosted via capture mode instead - fullscreen is unavailable there while boosted.
 - **Loud, hot-mastered tracks** stop getting louder past ~2× with the limiter on - that's the limiter protecting your ears/headphones, not a bug. The upper range is headroom for quiet sources (a low podcast, an old upload). Turn the limiter off for raw gain.
 - **Reload auto-restore** is audible on its own on high-engagement sites like YouTube (Chrome's autoplay policy lets their audio resume without a click). On rarely-visited sites, and for capture-mode tabs, Chrome requires interaction first - the stored level snaps back the moment you reopen the popup.
 - **Browser pages** (`chrome://`, the Web Store, other extensions) can't be boosted and the popup says so.
