@@ -8,7 +8,7 @@ Tab Volume Booster te permite subir el volumen de cualquier pestaña del navegad
 • Un clic para restablecer el volumen normal.
 • Disponible en 14 idiomas. Las traducciones son contribuciones de la comunidad; visita el repositorio de GitHub para añadir la tuya.
 
-Privacidad: funciona por completo en tu dispositivo. Sin solicitudes de red, sin analíticas, sin anuncios y sin recopilar datos.
+Privacidad: funciona por completo en tu dispositivo. No se sube nada, sin analíticas, sin anuncios y sin recopilar datos.
 
 Código abierto (GPL-3.0): https://github.com/marcanxo/tab-volume-booster
 

@@ -8,7 +8,7 @@ Tab Volume Booster vous permet de monter le son de n'importe quel onglet du navi
 • Retour au volume normal en un clic.
 • Disponible en 14 langues. Les traductions sont des contributions de la communauté ; rendez-vous sur le dépôt GitHub pour ajouter la vôtre.
 
-Confidentialité : tout fonctionne sur votre appareil. Aucune requête réseau, aucune mesure d'audience, aucune publicité, aucune donnée collectée.
+Confidentialité : tout fonctionne sur votre appareil. Rien n'est téléversé, aucune mesure d'audience, aucune publicité, aucune donnée collectée.
 
 Open source (GPL-3.0) : https://github.com/marcanxo/tab-volume-booster
 

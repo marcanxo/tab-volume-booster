@@ -8,7 +8,7 @@ Tab Volume Booster macht jeden Browser-Tab lauter (bis zu 6x) oder leiser, bis h
 • Mit einem Klick zurück auf normale Lautstärke.
 • In 14 Sprachen verfügbar. Die Übersetzungen stammen aus der Community; wie du deine beisteuern kannst, steht im GitHub-Repo.
 
-Datenschutz: Läuft komplett auf deinem Gerät. Keine Netzwerkanfragen, kein Tracking, keine Werbung, keine Datenerfassung.
+Datenschutz: Läuft komplett auf deinem Gerät. Nichts wird hochgeladen, kein Tracking, keine Werbung, keine Datenerfassung.
 
 Open Source (GPL-3.0): https://github.com/marcanxo/tab-volume-booster
 

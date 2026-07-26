@@ -8,7 +8,7 @@ Tab Volume Booster ti permette di alzare il volume di qualsiasi scheda del brows
 • Torni al volume normale con un clic.
 • Disponibile in 14 lingue. Le traduzioni sono contributi della community: per aggiungere la tua, dai un'occhiata al repo GitHub.
 
-Privacy: funziona interamente sul tuo dispositivo. Nessuna richiesta di rete, niente analytics, niente pubblicità, nessun dato raccolto.
+Privacy: funziona interamente sul tuo dispositivo. Non viene caricato nulla, niente analytics, niente pubblicità, nessun dato raccolto.
 
 Open source (GPL-3.0): https://github.com/marcanxo/tab-volume-booster
 

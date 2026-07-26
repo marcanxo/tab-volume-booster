@@ -8,7 +8,7 @@ Tab Volume Booster pozwala jednym suwakiem zwiększyć głośność dowolnej kar
 • Powrót do normalnej głośności jednym kliknięciem.
 • Dostępny w 14 językach. Tłumaczenia tworzy społeczność, zajrzyj do repozytorium na GitHubie, aby dodać swoje.
 
-Prywatność: działa w całości na twoim urządzeniu. Żadnych połączeń sieciowych, żadnej analityki, żadnych reklam, żadnego zbierania danych.
+Prywatność: działa w całości na twoim urządzeniu. Nic nie trafia na serwery, żadnej analityki, żadnych reklam, żadnego zbierania danych.
 
 Otwarty kod źródłowy (GPL-3.0): https://github.com/marcanxo/tab-volume-booster
 

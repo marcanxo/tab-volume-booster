@@ -1,6 +1,6 @@
 # Privacy Policy - Tab Volume Booster
 
-_Last updated: 2026-06-05_
+_Last updated: 2026-07-25_
 
 **Tab Volume Booster does not collect, store, transmit, share, or sell any personal data.**
 
@@ -16,10 +16,24 @@ processing happens locally, in real time, on your device.
 That's it. These settings never leave your browser.
 
 ## Data the extension does NOT do
-- ❌ No network requests of any kind - no analytics, tracking, telemetry, or ads.
-- ❌ No external servers, accounts, cookies, or third-party services.
+- ❌ No analytics, tracking, telemetry, or ads.
+- ❌ No external servers, accounts, or third-party services. Nothing is ever uploaded.
 - ❌ It does not record, save, or transmit any audio, page content, browsing history, or
   personal information.
+
+## The one request it makes (and why)
+Before routing a page's own audio through its volume control, the extension must be sure the
+media is not cross-origin, because hooking such a source would silence the tab permanently. A
+media URL that looks same-origin can still redirect to another host, and that redirect is
+invisible from the page. So for **same-origin media URLs only**, the extension asks the site
+you are already on for the first byte of that same media file (a `Range: bytes=0-0` request,
+answered from cache when possible) purely to see whether it redirects elsewhere. The response
+is discarded immediately.
+
+The request goes to whichever origin is serving that media: the site you are on, or, for an
+embedded player, that player's own host. It never goes to us or to any analytics or third-party
+service, and it carries no information about you beyond the ordinary request your browser would
+already make for that file. Media on other origins is never requested this way.
 
 ## Permissions, in plain terms
 - **Tab audio access / capture** is used solely to re-output the current tab's own audio at your

@@ -8,7 +8,7 @@ Tab Volume Booster, herhangi bir tarayıcı sekmesinin sesini tek bir kaydırıc
 • Tek tıkla normale sıfırlama.
 • 14 dilde kullanılabilir. Çeviriler topluluk katkısıdır; kendi dilinizi eklemek için GitHub deposuna göz atın.
 
-Gizlilik: tamamen cihazınızda çalışır. Ağ isteği yok, analitik yok, reklam yok, veri toplanmaz.
+Gizlilik: tamamen cihazınızda çalışır. Hiçbir veri karşıya yüklenmez, analitik yok, reklam yok, veri toplanmaz.
 
 Açık kaynak (GPL-3.0): https://github.com/marcanxo/tab-volume-booster
 

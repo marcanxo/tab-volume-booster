@@ -8,7 +8,7 @@ O Tab Volume Booster permite deixar qualquer aba do navegador mais alta (até 6x
 • Um clique para redefinir e voltar ao normal.
 • Disponível em 14 idiomas. As traduções são contribuições da comunidade; veja o repositório no GitHub para adicionar a sua.
 
-Privacidade: funciona totalmente no seu dispositivo. Sem requisições de rede, sem análise de uso, sem anúncios, sem coleta de dados.
+Privacidade: funciona totalmente no seu dispositivo. Nada é enviado para servidores, sem análise de uso, sem anúncios, sem coleta de dados.
 
 Código aberto (GPL-3.0): https://github.com/marcanxo/tab-volume-booster
 

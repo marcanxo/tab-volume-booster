@@ -48,10 +48,25 @@ function serveFixtures() {
     res.end(wav);
   });
   const adReady = new Promise((r) => adServer.listen(0, "127.0.0.1", () => r(adServer.address().port)));
+  // Per-path request counter: lets a scenario assert how many times the redirect-safety probe
+  // actually hits the origin (the fetch-storm guard is invisible otherwise).
+  // bytes=0-0 is the redirect probe's signature; media elements request open-ended ranges, so
+  // counting only this keeps a looping <video> re-fetch from being charged to the extension.
+  const counts = {};
   const server = http.createServer(async (req, res) => {
-    if (req.url === "/tone.wav") {
+    const p = req.url.split("?")[0];
+    if (req.headers.range === "bytes=0-0") counts[p] = (counts[p] || 0) + 1;
+    if (req.url === "/tone.wav" || p === "/media.wav") {
       res.writeHead(200, { "Content-Type": "audio/wav", "Content-Length": wav.length });
       return res.end(wav);
+    }
+    // Same-origin URL that HTTP-redirects to another origin: plays natively, but its media data
+    // is CORS-tainted, so hooking it would silence the tab. This is what sameOriginChainOk exists
+    // to detect, and nothing in the blob-based fixtures ever exercised it.
+    if (p === "/redir.wav") {
+      const adPort = await adReady;
+      res.writeHead(302, { Location: `http://127.0.0.1:${adPort}/ad-tone.wav` });
+      return res.end();
     }
     if (req.url === "/adsrc") {
       const adPort = await adReady;
@@ -66,7 +81,7 @@ function serveFixtures() {
     res.end(fs.readFileSync(file));
   });
   return new Promise((r) =>
-    server.listen(0, "127.0.0.1", () => r({ server, adServer, port: server.address().port }))
+    server.listen(0, "127.0.0.1", () => r({ server, adServer, counts, port: server.address().port }))
   );
 }
 
@@ -83,10 +98,19 @@ async function getWorker(browser) {
 // Spy: wraps chrome.tabs.sendMessage inside the SW so every engage/stop/probe and its
 // RESPONSE is recorded. Also exposes helpers to run the worker's own entry points.
 async function installSpy(sw) {
-  await sw.evaluate(() => {
+  await sw.evaluate(async () => {
     if (globalThis.__spy) { globalThis.__spy.log.length = 0; return; }
+    // The worker target can be attachable before its chrome.* namespaces are wired up, so the
+    // very first evaluate can find chrome.runtime/chrome.tabs still undefined. Wait them out.
+    for (let i = 0; i < 100; i++) {
+      if (globalThis.chrome && chrome.tabs && chrome.tabs.sendMessage && chrome.runtime && chrome.runtime.onMessage) break;
+      await new Promise((r) => setTimeout(r, 50));
+    }
     const log = [];
-    globalThis.__spy = { log };
+    globalThis.__spy = { log, pings: 0 };
+    // Count inbound 'navigated' pings so a scenario can assert the anti-flood ceiling: the
+    // gesture fast-path trades some of that ceiling away and nothing else would catch it.
+    chrome.runtime.onMessage.addListener((m) => { if (m && m.type === "navigated") globalThis.__spy.pings++; });
     const orig = chrome.tabs.sendMessage.bind(chrome.tabs);
     chrome.tabs.sendMessage = (tabId, msg, opts) => {
       const entry = { t: Date.now(), tabId, frameId: opts && opts.frameId, cmd: msg && msg.cmd };
@@ -130,9 +154,16 @@ async function waitEngage(sw, pred, timeoutMs) {
   }
 }
 
-// Trusted click on a fixture video via CDP input (real user activation).
+// Trusted click on a fixture video via CDP input (real user activation). Scrolls it into view
+// first: in a growing feed the target is otherwise below the fold and the click lands on nothing.
 async function clickVideo(page, id) {
-  const pos = await page.evaluate((i) => window.feed.rect(i), id);
+  const pos = await page.evaluate((i) => {
+    const v = document.getElementById(i);
+    if (!v) return null;
+    v.scrollIntoView({ block: "center" });
+    const r = v.getBoundingClientRect();
+    return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+  }, id);
   if (!pos) throw new Error(`no video ${id}`);
   await page.mouse.click(pos.x, pos.y);
 }
@@ -403,6 +434,144 @@ const scenarios = {
     } finally { await page.close(); }
   },
 
+  // Clicking through a feed: EVERY click must stay fast. Before gesture-attributed urgency the
+  // 3-per-10s token budget ran dry and click 4+ fell back to the ~2s churn wait - the reported
+  // "my ears get blasted for 1-2s" on a ducked tab.
+  async s11_repeat_click_latency(ctx) {
+    const page = await newFeedPage(ctx.browser, ctx.port);
+    try {
+      const first = await page.evaluate(() => window.feed.addAudible());
+      await sleep(300);
+      const tabId = await tabIdOf(ctx.sw, ctx.port);
+      const r1 = await swSetGain(ctx.sw, tabId, 0.05); // ducked: the case that actually hurts
+      if (r1.mode !== "element" || !r1.confirmed) return `setup failed: ${JSON.stringify(r1)}`;
+      await page.evaluate((i) => window.feed.pause(i), first);
+      const times = [];
+      for (let i = 0; i < 6; i++) {
+        const id = await page.evaluate(() => window.feed.add()); // muted autoplay, like the feed
+        await sleep(1000);                                       // user cadence between clicks
+        await swClearLog(ctx.sw);
+        await clickVideo(page, id);                              // trusted CDP click = real gesture
+        const { hit, elapsed } = await waitEngage(ctx.sw, (r) => r.ok && r.signal === true, 5000);
+        if (!hit) return `click ${i + 1}: boost never confirmed`;
+        times.push(elapsed);
+        await page.evaluate((x) => window.feed.pause(x), id);
+      }
+      ctx.note(`${times.join("/")}ms`);
+      const worst = Math.max(...times);
+      if (worst > 700) return `latency degrades on repeat clicks: ${times.join("/")}ms (budget 700ms each)`;
+      return true;
+    } finally { await page.close(); }
+  },
+
+  // The anti-flood ceiling the gesture fast-path trades against. ONE real click must not licence
+  // a page to drive the worker: a non-hooked element spamming volumechange gets at most the
+  // per-gesture allowance, then falls back to the budget and the churn wait.
+  async s12_ping_flood_ceiling(ctx) {
+    const page = await newFeedPage(ctx.browser, ctx.port);
+    try {
+      const main = await page.evaluate(() => window.feed.addAudible());
+      await sleep(300);
+      const tabId = await tabIdOf(ctx.sw, ctx.port);
+      const r = await swSetGain(ctx.sw, tabId, 3);
+      if (r.mode !== "element" || !r.confirmed) return `setup failed: ${JSON.stringify(r)}`;
+      const spam = await page.evaluate(() => window.feed.addAudible()); // 2nd audible video, never hooked
+      await sleep(2600);                                               // let the churn settle
+      await ctx.sw.evaluate(() => { globalThis.__spy.pings = 0; });
+      await clickVideo(page, main);   // ONE trusted gesture (on the hooked element: no ping itself)
+      await page.evaluate((id) => {   // page spams volumechange on the OTHER element
+        const v = document.getElementById(id);
+        let n = 0;
+        window.__spamTimer = setInterval(() => { v.volume = (n++ % 2) ? 0.5 : 0.6; }, 5);
+      }, spam);
+      await sleep(1500);
+      await page.evaluate(() => clearInterval(window.__spamTimer));
+      const pings = await ctx.sw.evaluate(() => globalThis.__spy.pings);
+      ctx.note(`${pings} pings`);
+      if (pings > 8) return `ping flood: ${pings} navigated messages in 1.5s after a single click (ceiling 8)`;
+      return true;
+    } finally { await page.close(); }
+  },
+
+  // Redirect safety, and the request cost of warming it. A same-origin URL that 302s to another
+  // origin must never be hooked (it would silence the tab), and repeated probes must not re-fetch
+  // that failing URL every time.
+  async s13_same_origin_redirect_guard(ctx) {
+    const page = await newFeedPage(ctx.browser, ctx.port);
+    try {
+      // (a) a plain same-origin file is hookable
+      await page.evaluate(() => window.feed.addSrc("/media.wav"));
+      await sleep(500);
+      const tabId = await tabIdOf(ctx.sw, ctx.port);
+      const good = await swSetGain(ctx.sw, tabId, 3);
+      if (good.mode !== "element" || !good.confirmed) return `same-origin media not hooked: ${JSON.stringify(good)}`;
+      await swSetGain(ctx.sw, tabId, 1); // release before the second half
+      await sleep(300);
+    } finally { await page.close(); }
+
+    const page2 = await newFeedPage(ctx.browser, ctx.port);
+    try {
+      // (b) a same-origin URL that redirects cross-origin must be refused, not hooked
+      await page2.evaluate(() => window.feed.addSrc("/redir.wav"));
+      await sleep(600);
+      const tabId = await tabIdOf(ctx.sw, ctx.port);
+      await swClearLog(ctx.sw);
+      ctx.counts["/redir.wav"] = ctx.counts["/redir.wav"] || 0;
+      const res = await swSetGain(ctx.sw, tabId, 3);
+      if (res.mode === "element") return `BUG: hooked a same-origin URL that redirects cross-origin (would silence the tab)`;
+      const log = await swSpyLog(ctx.sw);
+      const refused = log.find((e) => e.cmd === "engage" && e.res && e.res.reason === "cross-origin-redirect");
+      if (!refused) return `expected a cross-origin-redirect refusal, got ${JSON.stringify(log.filter((e) => e.cmd === "engage").map((e) => e.res))}`;
+      // (c) repeated probes must not re-request the failing URL every time (negative TTL)
+      const before = ctx.counts["/redir.wav"];
+      for (let i = 0; i < 6; i++) {
+        await ctx.sw.evaluate((t) => chrome.tabs.sendMessage(t, { cmd: "probe" }).catch(() => {}), tabId);
+        await sleep(200);
+      }
+      const added = (ctx.counts["/redir.wav"] || 0) - before;
+      ctx.note(`refused; ${added} extra probe requests over 6 probes`);
+      if (added > 0) return `probe warming re-fetches the failing src: ${added} requests over 6 probes`;
+      return true;
+    } finally { await page2.close(); }
+  },
+
+  // A burst of urgent signals that COALESCES into one send must not spend the whole urgency
+  // budget: the next genuine, gesture-less urgency (a site unmuting by itself after an ad) has
+  // to stay fast. Pre-fix the budget was charged before the coalescing check, so three folded
+  // events emptied it and the next real one fell back to the ~2s churn wait.
+  async s14_nongesture_urgency_survives_burst(ctx) {
+    const page = await newFeedPage(ctx.browser, ctx.port);
+    try {
+      const main = await page.evaluate(() => window.feed.addAudible());
+      await sleep(300);
+      const tabId = await tabIdOf(ctx.sw, ctx.port);
+      const r = await swSetGain(ctx.sw, tabId, 0.05); // ducked: the case where a delay hurts
+      if (r.mode !== "element" || !r.confirmed) return `setup failed: ${JSON.stringify(r)}`;
+      const spam = await page.evaluate(() => window.feed.addAudible()); // audible, never hooked
+      const target = await page.evaluate(() => window.feed.add());      // muted autoplay
+      await sleep(2600);
+      // burst of urgent-but-coalescing volumechange, with NO user gesture anywhere
+      await page.evaluate((id) => {
+        const v = document.getElementById(id);
+        for (let i = 0; i < 12; i++) v.volume = 0.5 + (i % 2) * 0.1;
+      }, spam);
+      await sleep(400);
+      await swClearLog(ctx.sw);
+      // the genuine event, still gesture-less: the page unmutes its next video by itself
+      await page.evaluate((m, s, t) => {
+        window.feed.pause(m);
+        window.feed.pause(s);
+        const v = document.getElementById(t);
+        v.muted = false; v.volume = 1;
+      }, main, spam, target);
+      const { hit, elapsed } = await waitEngage(ctx.sw, (x) => x.ok && x.signal === true, 5000);
+      if (!hit) return `boost never confirmed after a gesture-less unmute`;
+      ctx.note(`${elapsed}ms`);
+      if (elapsed > 700) return `gesture-less urgency degraded to ${elapsed}ms after a coalesced burst`;
+      return true;
+    } finally { await page.close(); }
+  },
+
   // Release must reach the swapped-in hook: boost, swap, click (boost lands), then 1.0x.
   async s8_release_after_swap(ctx) {
     const page = await newFeedPage(ctx.browser, ctx.port);
@@ -427,7 +596,7 @@ const scenarios = {
 
 // ---- main ---------------------------------------------------------------
 (async () => {
-  const { server, adServer, port } = await serveFixtures();
+  const { server, adServer, counts, port } = await serveFixtures();
   const browser = await puppeteer.launch({
     executablePath: CHROME,
     headless: false, // extension + media playback: headed is the reliable path; window is small and brief
@@ -449,7 +618,7 @@ const scenarios = {
     for (const [name, fn] of Object.entries(scenarios)) {
       if (wanted.length && !wanted.some((w) => name.startsWith(w))) continue;
       const notes = [];
-      const ctx = { browser, port, sw, note: (s) => notes.push(s) };
+      const ctx = { browser, port, sw, counts, note: (s) => notes.push(s) };
       let outcome;
       try { outcome = await fn(ctx); }
       catch (e) { outcome = `threw: ${e.message}`; }

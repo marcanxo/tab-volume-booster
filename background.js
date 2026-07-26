@@ -377,8 +377,9 @@ async function restoreAfterLoad(tabId, gain, useLimiter, prior) {
       if (res && res.ok) {
         // Same as setGain: a prior CAPTURE graph must not keep boosting under the new hook.
         if ((await getActive()).includes(tabId)) await captureStop(tabId);
-        // Engage takes up to ~1.5s (probe + measure) - re-verify the user didn't release or
-        // retarget the level meanwhile; the user's action must always win over the restore.
+        // Engage can take seconds (the redirect probe's deadline, which a late joiner may
+        // extend to CHAIN_TOTAL_MAX, plus the resume wait and measure) - re-verify the user
+        // didn't release or retarget the level meanwhile; their action must always win.
         const after = await sget(TABGAIN(tabId));
         if (!isActiveGain(after)) { await toFrame(tabId, null, { cmd: "stop" }); await clearMode(tabId); }
         else if (after !== g) await toFrame(tabId, info.frameId, { cmd: "engage", gain: after, useLimiter });

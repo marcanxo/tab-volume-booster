@@ -8,7 +8,7 @@ Tab Volume Booster memungkinkan Anda mengeraskan tab browser mana pun (hingga 6x
 • Reset ke volume normal cukup dengan sekali klik.
 • Tersedia dalam 14 bahasa. Terjemahannya merupakan kontribusi komunitas; lihat repo GitHub untuk menambahkan bahasa Anda.
 
-Privasi: berjalan sepenuhnya di perangkat Anda. Tanpa permintaan jaringan, tanpa analitik, tanpa iklan, tanpa pengumpulan data.
+Privasi: berjalan sepenuhnya di perangkat Anda. Tidak ada yang diunggah, tanpa analitik, tanpa iklan, tanpa pengumpulan data.
 
 Sumber terbuka (GPL-3.0): https://github.com/marcanxo/tab-volume-booster
 

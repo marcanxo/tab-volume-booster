@@ -80,6 +80,9 @@
         const ad = makePost({ muted: false, src });
         return ad.id;
       },
+      // add an audible playing post with an EXPLICIT src (same-origin file, or a same-origin URL
+      // that redirects cross-origin) - the blob: posts above never exercise the redirect probe
+      addSrc(url) { return makePost({ muted: false, src: url }).id; },
       // attach real (ClearKey) MediaKeys to a video so it reads as DRM to capability checks
       async makeDrm(id) {
         const v = document.getElementById(id);

@@ -81,30 +81,52 @@
   // element, so before trusting a 'same-origin' verdict we probe the URL with a mode:'same-origin'
   // fetch: it REJECTS on any cross-origin redirect. Any resolved HTTP status counts as clean
   // (only the redirect matters); rejection or a slow server means "don't risk it" (capture instead).
-  const chainVerdicts = new Map(); // src -> Promise<boolean>
+  const chainVerdicts = new Map(); // src -> { p: Promise<boolean>, at, ok: true|false|null, extend }
+  const CHAIN_NEG_TTL = 30000;   // a negative is re-tried after this, not cached for the page's life
+  const CHAIN_SLICE = 2000;      // how long any single caller is willing to wait
+  const CHAIN_TOTAL_MAX = 4000;  // hard ceiling on one probe's lifetime, however many join it
   function sameOriginChainOk(src) {
-    let v = chainVerdicts.get(src);
-    if (!v) {
-      v = (async () => {
-        const ctl = new AbortController();
-        const kill = setTimeout(() => ctl.abort(), 2000);
-        try {
-          const res = await fetch(src, {
-            mode: "same-origin", credentials: "same-origin", cache: "force-cache",
-            headers: { Range: "bytes=0-0" }, signal: ctl.signal
-          });
-          try { res.body && res.body.cancel(); } catch (_) {}
-          return true;
-        } catch (_) {
-          return false;
-        } finally { clearTimeout(kill); }
-      })();
-      chainVerdicts.set(src, v);
-      // Only KEEP positive verdicts: a rejection can be transient (2s timeout on a cold server,
-      // brief network blip) and must not disable element mode for this src for the page's lifetime.
-      v.then((ok) => { if (!ok) chainVerdicts.delete(src); });
+    const now = performance.now();
+    const e = chainVerdicts.get(src);
+    // A negative is kept until its TTL, then re-probed: a rejection can be transient (cold server
+    // hitting the abort, a blip) and must not disable element mode for the page's life, but
+    // deleting it outright made every failing src re-fetch on EVERY probe - a request amplifier
+    // aimed at the site.
+    if (e && !(e.ok === false && now - e.at > CHAIN_NEG_TTL)) {
+      // Still in flight: give the LATE caller its own fresh slice of patience on the SAME
+      // request instead of starting a second one. Starting one per caller would multiply
+      // requests on exactly the slow origins warming exists for (the restore loop re-probes
+      // roughly every 750ms), while inheriting a nearly-spent deadline would hand back a false
+      // verdict that the worker treats as terminal (sticky capture mode).
+      if (e.ok === null) e.extend(now);
+      return e.p;
     }
-    return v;
+    const entry = { p: null, at: now, ok: null, extend: null };
+    const ctl = new AbortController();
+    let kill = null;
+    const arm = (from) => {
+      clearTimeout(kill);
+      const left = Math.min(CHAIN_SLICE, entry.at + CHAIN_TOTAL_MAX - from);
+      if (left <= 0) { try { ctl.abort(); } catch (_) {} return; }
+      kill = setTimeout(() => { try { ctl.abort(); } catch (_) {} }, left);
+    };
+    entry.extend = arm;
+    arm(now);
+    entry.p = (async () => {
+      try {
+        const res = await fetch(src, {
+          mode: "same-origin", credentials: "same-origin", cache: "force-cache",
+          headers: { Range: "bytes=0-0" }, signal: ctl.signal
+        });
+        try { res.body && res.body.cancel(); } catch (_) {}
+        return true;
+      } catch (_) {
+        return false;
+      } finally { clearTimeout(kill); }
+    })();
+    chainVerdicts.set(src, entry);
+    entry.p.then((ok) => { entry.ok = ok; });
+    return entry.p;
   }
 
   // Toggle the limiter by RAMPING its compression ratio (20:1 on → 1:1 off) rather than disconnecting
@@ -223,6 +245,30 @@
   let lastNavPing = -2000; // negative: the FIRST ping must not be rate-capped against the frame's time origin
   let urgentBudget = 3;    // urgent escalations left in the current window
   let urgentReset = 0;     // when the budget refills (perf.now() clock)
+  // A REAL user gesture is the strongest possible evidence that the signal about to follow is
+  // genuine (click-to-unmute is one physical action), so signals attributed to one skip the
+  // anti-flood budget and get a near-zero delay. Only e.isTrusted counts: synthetic events grant
+  // no user activation, so a page cannot mint attribution.
+  // The window ALSO carries its own small allowance. Without it, one click would open 1s in which
+  // the only limit is the 20ms floor - a page flapping `muted` could then drive ~50 worker wakes
+  // per click, far worse than the flood the budget was written for. Two sends per physical
+  // gesture is all a legitimate click-to-unmute needs (the ping, plus one for the churn the
+  // site's own handler causes). Key auto-repeat is ignored: holding a key would otherwise hold
+  // the window open indefinitely.
+  let lastGestureAt = -100000;
+  let gestureUrgentLeft = 0;
+  let gestureArmed = false; // engage() found a suspended AudioContext; retry on the next gesture
+  const GESTURE_WINDOW = 1000;
+  const noteGesture = (e) => {
+    if (!e.isTrusted || (e.type === "keydown" && e.repeat)) return;
+    lastGestureAt = performance.now();
+    gestureUrgentLeft = 2;
+    // A gesture is also what unblocks an AudioContext that engage() found suspended, so this is
+    // the moment to retry (see armGestureRetry).
+    if (gestureArmed) { gestureArmed = false; pingNavigated(true); }
+  };
+  window.addEventListener("pointerdown", noteGesture, true);
+  window.addEventListener("keydown", noteGesture, true);
   function pingNavigated(urgent) {
     // Debounce bursts AND cap the rate: media DOM churn (ad rotations, lazy players) would
     // otherwise wake the MV3 service worker over and over, even when nothing is boosted.
@@ -236,15 +282,29 @@
     // user interaction, but a hostile page could flap `muted` (or spam events) to re-arm them at the
     // engage roundtrip rate - once the budget is spent, escalations degrade to the churn wait, which
     // is exactly the pre-1.1.2 worker load ceiling.
-    if (urgent === true) {
-      if (now > urgentReset) { urgentBudget = 3; urgentReset = now + 10000; }
-      if (urgentBudget > 0) urgentBudget--; else urgent = false;
-    }
-    const wait = urgent === true ? 250 : Math.max(250, 2000 - (now - lastNavPing));
+    const byGesture = urgent === true && gestureUrgentLeft > 0 && now - lastGestureAt < GESTURE_WINDOW;
+    // Only TENTATIVE here: whether the budget could cover this. Both allowances are charged
+    // further down, for a send we actually schedule. Charging up here (as this did before)
+    // let a burst that coalesces into ONE pending send drain all three tokens, so the next
+    // genuine urgency - the content video becoming audible after an ad, say - fell back to the
+    // 2s churn wait. On a ducked tab that is 2s of native-level audio: the very symptom the
+    // gesture fast-path fixes, just on the non-gesture route.
+    const byBudget = urgent === true && !byGesture && (now > urgentReset || urgentBudget > 0);
+    // 20ms for a gesture-attributed signal: enough to coalesce the burst a single click produces
+    // (volumechange + play + the churn the site's own handler causes) into one send, without a
+    // wait the user can hear. Ducked tabs would otherwise blast at native level for the delay.
+    const wait = byGesture ? 20 : byBudget ? 250 : Math.max(250, 2000 - (now - lastNavPing));
     const at = now + wait;
     if (navPingTimer) {
       if (at >= navPingAt) return; // the pending send fires sooner anyway - it covers this signal
       clearTimeout(navPingTimer);  // urgent: pull the pending send forward, never push it back
+    }
+    // Spend an allowance only for a send we actually SCHEDULE: signals folded into a pending
+    // send above cost nothing, so one click's natural burst can't drain either budget.
+    if (byGesture) gestureUrgentLeft--;
+    else if (byBudget) {
+      if (now > urgentReset) { urgentBudget = 3; urgentReset = now + 10000; }
+      urgentBudget--;
     }
     navPingAt = at;
     navPingTimer = setTimeout(() => {
@@ -254,25 +314,16 @@
     }, wait);
   }
 
-  // One-shot: when engage() refused because the AudioContext couldn't run (autoplay
-  // policy - fresh frame with no user activation yet), retry after the first gesture
-  // in this frame. Activation is per-frame, so this is the earliest it can succeed.
-  let gestureArmed = false;
-  function armGestureRetry() {
-    if (gestureArmed) return;
-    gestureArmed = true;
-    const once = (e) => {
-      // Page-dispatched synthetic events grant NO user activation - the retried engage would just
-      // refuse 'suspended' again, so don't let them consume the one-shot or burn an urgent token.
-      if (!e.isTrusted) return;
-      gestureArmed = false;
-      window.removeEventListener("pointerdown", once, true);
-      window.removeEventListener("keydown", once, true);
-      pingNavigated(true); // the gesture just unlocked audio - don't sit out the churn cooldown
-    };
-    window.addEventListener("pointerdown", once, true);
-    window.addEventListener("keydown", once, true);
-  }
+  // One-shot: when engage() refused because the AudioContext couldn't run (autoplay policy -
+  // fresh frame with no user activation yet), retry after the first gesture in this frame.
+  // Activation is per-frame, so this is the earliest it can succeed. The retry rides on
+  // noteGesture's listeners rather than adding its own pair: same events, same target, same
+  // phase, and running inside noteGesture guarantees the retry ping sees a fresh gesture
+  // (a separate listener would depend on registration order to get the fast path).
+  function armGestureRetry() { gestureArmed = true; }
+
+  let warmedTotal = 0;              // distinct srcs this frame has ever probed (see the probe handler)
+  const WARM_TOTAL_MAX = 8;
 
   const MEDIA_TAGS = /^(IFRAME|VIDEO|AUDIO)$/;
   function touchesMedia(muts) {
@@ -382,9 +433,11 @@
       return { ok: false, reason: "suspended" };
     }
 
-    // Final pre-hook re-check: the probe/resume awaits above can take up to ~2s, and a player may
-    // rotate its src meanwhile (ad stitching). The one-shot hook lands on the ELEMENT, so it must
-    // still show exactly what was assessed - otherwise refuse; the next engage re-gates the new src.
+    // Final pre-hook re-check: the probe/resume awaits above can take up to CHAIN_TOTAL_MAX (a
+    // late joiner re-arms the redirect probe's deadline) plus the resume wait, so several
+    // seconds, and a player may rotate its src meanwhile (ad stitching). The one-shot hook lands
+    // on the ELEMENT, so it must still show exactly what was assessed - otherwise refuse; the
+    // next engage re-gates the new src.
     const a2 = assess(el);
     if (!a2.safe || (el.currentSrc || el.src || "") !== probedSrc) {
       try { ctx.close(); } catch (_) {}
@@ -442,8 +495,12 @@
 
     if (msg.cmd === "probe") {
       // Non-destructive capability report. Frames with no element stay silent.
-      let el = pickElement();
-      if (!el) return;
+      // Ranked ONCE: rankElements measures every media element, and this handler needs the list
+      // three times (winner, safe stand-in, warm loop).
+      const ranked = rankElements();
+      if (!ranked.length) return;
+      let pick = ranked[0];
+      let el = pick.el;
       let a = assess(el);
       // If the top pick is unhookable, it may be a transient interloper (a cross-origin ad
       // video playing over the paused content player). Mode prediction should see the best
@@ -451,12 +508,31 @@
       // pages whose ONLY media is unhookable (DRM) still report that honestly below.
       let substituted = false;
       if (!a.safe) {
-        const alt = rankElements().find((s) => assess(s.el).safe);
-        if (alt) { el = alt.el; a = assess(el); substituted = true; }
+        const alt = ranked.find((s) => assess(s.el).safe);
+        if (alt) { pick = alt; el = alt.el; a = assess(el); substituted = true; }
       }
       // Warm the redirect check now (fire-and-forget) so a following engage hits the cache.
-      if (a.safe && a.reason === "same-origin") sameOriginChainOk(el.currentSrc || el.src);
-      const r = el.getBoundingClientRect();
+      // EVERY safe same-origin candidate, not just the winner: the element the user ends up on
+      // is often not today's top pick (an ad interloper outranks it, or they click a different
+      // post), and a cold verdict costs the engage the probe's full wait.
+      // Bounded at 2 new REQUESTS per probe (not candidate slots - counting cache hits would let
+      // the top picks permanently consume the budget and never warm the rest) AND at
+      // WARM_TOTAL_MAX distinct srcs for this frame's lifetime, since probes are frequent (every
+      // popup open, every setGain, once per restore iteration) and a per-probe cap alone would
+      // still walk a long gallery. Media the page has not started loading is skipped entirely: a
+      // preload="none" gallery would otherwise get credentialed range requests for clips the user
+      // never played, which the site may count as views.
+      let warmed = 0;
+      for (const s of ranked) {
+        if (warmed >= 2 || warmedTotal >= WARM_TOTAL_MAX) break;
+        const src = s.el.currentSrc;
+        if (!src || (s.el.paused && s.el.readyState < 2)) continue;
+        const sa = assess(s.el);
+        if (!sa.safe || sa.reason !== "same-origin") continue;
+        const before = chainVerdicts.get(src);
+        sameOriginChainOk(src);
+        if (chainVerdicts.get(src) !== before) { warmed++; warmedTotal++; } // a NEW entry = a real request
+      }
       try {
         chrome.runtime.sendMessage({
           type: "frameCandidate",
@@ -464,7 +540,7 @@
             hasElement: true,
             safe: a.safe,
             reason: a.reason,
-            area: Math.max(0, r.width) * Math.max(0, r.height),
+            area: pick.area, // already measured by rankElements - no second layout read
             playing: !el.paused && !el.ended && el.readyState >= 2,
             audible: !el.muted && el.volume > 0,
             // a stand-in for an unhookable top pick: fine for mode prediction, but the worker

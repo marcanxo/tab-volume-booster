@@ -20,7 +20,7 @@ It's a *hybrid*: per tab it automatically picks the boosting method that preserv
 - **Built-in limiter.** Tames distortion on hard boosts; toggle is click-free.
 - **One-click reset** back to 1× (off).
 - **Speaks your language.** The popup ships in 14 languages, auto-selected from your browser's language. Adding another is a single JSON file - see [TRANSLATING.md](TRANSLATING.md).
-- **Private.** No network requests, no analytics, no accounts. The only thing stored is your per-tab level and the limiter preference, in Chrome's on-device extension storage.
+- **Private.** Nothing is uploaded: no analytics, no accounts, no third parties. The only thing stored is your per-tab level and the limiter preference, in Chrome's on-device extension storage. (The one request it ever makes is a same-origin redirect check against the site you're on - see [Privacy](#privacy).)
 
 ---
 
@@ -108,7 +108,9 @@ Missing yours, or spotted awkward wording? Adding or fixing a language is a sing
 
 ## Privacy
 
-This extension makes **no network requests** and collects **no data**. It stores only your per-tab volume level and the limiter on/off preference, using Chrome's on-device storage. Nothing is sent anywhere.
+This extension collects **no data** and uploads **nothing**. It stores only your per-tab volume level and the limiter on/off preference, using Chrome's on-device storage.
+
+It makes exactly one kind of network request: for **same-origin media URLs**, a `Range: bytes=0-0` request to that media file, to check whether the URL redirects to another host. That check is required because hooking cross-origin media would silence the tab permanently, and the redirect is invisible from the page. It goes to whichever origin serves that media (the site you're on, or an embedded player's own host), the response is discarded, media on other origins is never requested, and nothing is ever sent to us or to a third party. See [PRIVACY.md](PRIVACY.md).
 
 ---
 
