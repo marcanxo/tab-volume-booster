@@ -41,6 +41,8 @@ The mode is chosen by a **non-destructive pre-check** (source origin / `crossOri
 
 **[➜ Install Tab Volume Booster](https://chromewebstore.google.com/detail/lcbedgoeigfomodfdiepidklaoplonii)** - one click, and updates arrive automatically.
 
+What changed in each version: [CHANGELOG.md](CHANGELOG.md).
+
 ### From source (load unpacked)
 
 You can always install straight from source - no store needed (requires Chrome 116+):
