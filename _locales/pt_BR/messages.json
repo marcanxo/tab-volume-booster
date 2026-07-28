@@ -76,5 +76,8 @@
   },
   "modeNone": {
     "message": "Sem aumento"
+  },
+  "sourceTitle": {
+    "message": "Código-fonte no GitHub"
   }
 }

@@ -76,5 +76,8 @@
   },
   "modeNone": {
     "message": "Boost non attivo"
+  },
+  "sourceTitle": {
+    "message": "Codice sorgente su GitHub"
   }
 }

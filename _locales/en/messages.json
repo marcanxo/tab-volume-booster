@@ -102,5 +102,9 @@
   "modeNone": {
     "message": "Not boosting",
     "description": "Neutral status pill at 1× (off). Keep short."
+  },
+  "sourceTitle": {
+    "message": "Source code on GitHub",
+    "description": "Tooltip and screen-reader label of the small GitHub icon in the popup footer."
   }
 }

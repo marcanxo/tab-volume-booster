@@ -76,5 +76,8 @@
   },
   "modeNone": {
     "message": "Bez wzmocnienia"
+  },
+  "sourceTitle": {
+    "message": "Kod źródłowy na GitHubie"
   }
 }

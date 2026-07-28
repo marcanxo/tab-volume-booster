@@ -76,5 +76,8 @@
   },
   "modeNone": {
     "message": "Aucun boost"
+  },
+  "sourceTitle": {
+    "message": "Code source sur GitHub"
   }
 }

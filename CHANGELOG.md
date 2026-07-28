@@ -3,6 +3,11 @@
 What changed in each release, in plain terms. Versions match the ones published on the
 [Chrome Web Store](https://chromewebstore.google.com/detail/lcbedgoeigfomodfdiepidklaoplonii).
 
+## 1.1.6 - 2026-07-28
+
+- **The popup now shows the installed version** and links to the source code on GitHub, so you can
+  check at a glance which build you are running and read exactly what it does.
+
 ## 1.1.5 - 2026-07-26
 
 - **The boost now applies about three times faster after you click a muted video.** On feeds where

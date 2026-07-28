@@ -76,5 +76,8 @@
   },
   "modeNone": {
     "message": "Ses artırılmıyor"
+  },
+  "sourceTitle": {
+    "message": "GitHub'da kaynak kodu"
   }
 }

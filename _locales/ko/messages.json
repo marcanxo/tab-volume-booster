@@ -76,5 +76,8 @@
   },
   "modeNone": {
     "message": "부스트 꺼짐"
+  },
+  "sourceTitle": {
+    "message": "GitHub의 소스 코드"
   }
 }

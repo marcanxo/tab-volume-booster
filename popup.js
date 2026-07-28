@@ -252,4 +252,6 @@ async function init() {
 }
 
 applyI18n();
+// Straight from the manifest, so the number shown can never drift from the build installed.
+document.getElementById("ver").textContent = "v" + chrome.runtime.getManifest().version;
 init();

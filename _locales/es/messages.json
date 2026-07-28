@@ -76,5 +76,8 @@
   },
   "modeNone": {
     "message": "Sin amplificar"
+  },
+  "sourceTitle": {
+    "message": "Código fuente en GitHub"
   }
 }
