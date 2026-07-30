@@ -48,13 +48,13 @@
     "message": "Layar penuh · boost dijeda"
   },
   "modePausedTitleConflict": {
-    "message": "Aplikasi lain sedang menggunakan audio tab ini. Boost dijeda agar layar penuh bawaan tetap berfungsi."
+    "message": "Halaman ini sudah menangani audionya sendiri (atau aplikasi lain yang menanganinya). Boost dijeda agar layar penuh bawaan tetap berfungsi."
   },
   "modePausedTitlePref": {
     "message": "“Utamakan layar penuh” aktif untuk tab ini, jadi tingkat volume tidak diterapkan lewat perekaman."
   },
   "pausedMsgConflict": {
-    "message": "Aplikasi lain sudah menggunakan audio tab ini. Boost dijeda agar layar penuh tetap berfungsi - nonaktifkan “Utamakan layar penuh” untuk melakukan boost lewat perekaman (layar penuh nonaktif)."
+    "message": "Halaman ini sudah menangani audionya sendiri (atau aplikasi lain yang menanganinya), jadi boost akan memerlukan perekaman tab. Boost dijeda agar layar penuh tetap ada: matikan “Utamakan layar penuh” untuk tetap melakukan boost (tanpa layar penuh)."
   },
   "pausedMsgPref": {
     "message": "“Utamakan layar penuh” aktif untuk tab ini, jadi tingkat volume tidak diterapkan lewat perekaman. Nonaktifkan untuk mengatur volume di halaman ini (layar penuh tidak tersedia selama perekaman)."
@@ -69,10 +69,10 @@
     "message": "Sumber ini tidak bisa diakses langsung (DRM, lintas origin, atau tanpa elemen), jadi perekaman tab digunakan. Layar penuh dinonaktifkan selama boost; turunkan ke 1.0× untuk layar penuh."
   },
   "modeCaptureTitleConflict": {
-    "message": "Aplikasi lain sedang menggunakan audio tab ini, jadi boost dilakukan lewat perekaman. Layar penuh dinonaktifkan selama boost."
+    "message": "Boost aktif, tetapi tidak dalam layar penuh: halaman ini sudah menangani audionya sendiri (atau aplikasi lain yang menanganinya), jadi perekaman tab digunakan."
   },
   "captureMsgConflict": {
-    "message": "Aplikasi lain sudah menggunakan audio tab ini, jadi boost dilakukan lewat perekaman - layar penuh tidak tersedia. Aktifkan “Utamakan layar penuh” untuk mempertahankan layar penuh (tanpa boost)."
+    "message": "Boost aktif, tetapi layar penuh tidak tersedia: halaman ini sudah menangani audionya sendiri (atau aplikasi lain yang menanganinya), jadi perekaman tab digunakan. Aktifkan “Utamakan layar penuh” untuk mempertahankan layar penuh (tanpa boost)."
   },
   "modeNone": {
     "message": "Boost nonaktif"

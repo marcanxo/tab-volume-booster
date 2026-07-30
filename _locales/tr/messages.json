@@ -48,13 +48,13 @@
     "message": "Tam ekran açık · artırma durdu"
   },
   "modePausedTitleConflict": {
-    "message": "Bu sekmenin sesini başka bir uygulama kullanıyor. Yerel tam ekranın çalışmaya devam edebilmesi için ses artırma duraklatıldı."
+    "message": "Bu sayfa sesini zaten kendisi işliyor (ya da başka bir uygulama işliyor). Yerel tam ekran çalışmaya devam etsin diye ses artırma duraklatıldı."
   },
   "modePausedTitlePref": {
     "message": "Bu sekmede “Tam ekranı tercih et” açık olduğundan ses düzeyi yakalama yoluyla uygulanmıyor."
   },
   "pausedMsgConflict": {
-    "message": "Bu sekmenin sesini zaten başka bir uygulama kullanıyor. Tam ekranın çalışmaya devam etmesi için ses artırma duraklatıldı - bunun yerine yakalama yoluyla artırmak için “Tam ekranı tercih et” seçeneğini kapatın (tam ekran devre dışı kalır)."
+    "message": "Bu sayfa sesini zaten kendisi işliyor (ya da başka bir uygulama işliyor), bu yüzden ses artırma sekme yakalama gerektirirdi. Tam ekranı korumak için artırma duraklatıldı: yine de artırmak için “Tam ekranı tercih et” seçeneğini kapatın (tam ekran olmadan)."
   },
   "pausedMsgPref": {
     "message": "Bu sekmede “Tam ekranı tercih et” açık olduğundan düzey yakalama yoluyla uygulanmıyor. Bu sayfada sesi ayarlamak için bu seçeneği kapatın (yakalama sırasında tam ekran kullanılamaz)."
@@ -69,10 +69,10 @@
     "message": "Bu kaynağa doğrudan erişilemiyor (DRM, çapraz kaynak veya medya öğesi yok); bu yüzden sekme yakalama kullanılıyor. Ses artırılırken tam ekran devre dışıdır; tam ekrana geçmek için 1.0× düzeyine inin."
   },
   "modeCaptureTitleConflict": {
-    "message": "Bu sekmenin sesini başka bir uygulama kullandığından ses yakalama yoluyla artırılıyor. Ses artırılırken tam ekran devre dışıdır."
+    "message": "Ses artırma açık, ancak tam ekran kullanılamıyor: bu sayfa sesini zaten kendisi işliyor (ya da başka bir uygulama işliyor), bu yüzden sekme yakalama kullanılıyor."
   },
   "captureMsgConflict": {
-    "message": "Bu sekmenin sesini zaten başka bir uygulama kullandığından ses yakalama yoluyla artırılıyor - tam ekran kullanılamıyor. Bunun yerine tam ekranı korumak için “Tam ekranı tercih et” seçeneğini açın (ses artırılmaz)."
+    "message": "Ses artırma açık, ancak tam ekran kullanılamıyor: bu sayfa sesini zaten kendisi işliyor (ya da başka bir uygulama işliyor), bu yüzden sekme yakalama kullanılıyor. Bunun yerine tam ekranı korumak için “Tam ekranı tercih et” seçeneğini açın (ses artırma olmadan)."
   },
   "modeNone": {
     "message": "Ses artırılmıyor"

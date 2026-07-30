@@ -4,7 +4,7 @@ Tab Volume Booster memungkinkan Anda mengeraskan tab browser mana pun (hingga 6x
 • Kecilkan backing track sampai lebih pelan daripada instrumen Anda: cocok untuk berlatih mengiringi lagu, saat Anda ingin lagunya terdengar pelan di bawah suara gitar.
 • Ramah layar penuh: di YouTube dan sebagian besar situs, ekstensi ini menyesuaikan audio halaman itu sendiri, jadi layar penuh bawaan tetap berfungsi selama boost aktif.
 • Per tab: setiap tab mengingat tingkat volumenya sendiri; tidak ada yang dibagikan antartab, dan pengaturannya langsung terlupakan begitu tab ditutup.
-• Andal: tetap bertahan saat halaman dimuat ulang maupun saat perpindahan “episode berikutnya”, terus mengikuti video meski pemutarnya diganti, dan dilengkapi limiter bawaan untuk meredam distorsi saat boost tinggi.
+• Tetap bertahan saat halaman dimuat ulang maupun saat perpindahan “episode berikutnya”, terus mengikuti video meski pemutarnya diganti, dan dilengkapi limiter bawaan untuk meredam distorsi saat boost tinggi.
 • Reset ke volume normal cukup dengan sekali klik.
 • Tersedia dalam 14 bahasa. Terjemahannya merupakan kontribusi komunitas; lihat repo GitHub untuk menambahkan bahasa Anda.
 

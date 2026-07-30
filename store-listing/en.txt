@@ -4,7 +4,7 @@ Tab Volume Booster lets you make any browser tab louder (up to 6x) or quieter, a
 • Turn a backing track DOWN below your instrument: great for practising along, when you want the song quiet under your guitar.
 • Fullscreen-friendly: on YouTube and most sites it adjusts the page's own audio, so native fullscreen keeps working while boosted.
 • Per-tab: each tab remembers its own level; nothing is shared, and it's forgotten when you close the tab.
-• Robust: survives page reloads and "next episode" transitions, follows the video even when the player is swapped out, and has a built-in limiter to tame distortion on hard boosts.
+• Survives page reloads and "next episode" transitions, follows the video even when the player is swapped out, and has a built-in limiter to tame distortion on hard boosts.
 • One-click reset back to normal.
 • Available in 14 languages. Translations are community contributions, see the GitHub repo to add yours.
 

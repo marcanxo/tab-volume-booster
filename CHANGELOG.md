@@ -3,6 +3,24 @@
 What changed in each release, in plain terms. Versions match the ones published on the
 [Chrome Web Store](https://chromewebstore.google.com/detail/lcbedgoeigfomodfdiepidklaoplonii).
 
+## 1.1.7 - 2026-07-30
+
+- **Clicking a muted video now applies the boost instantly.** The level is set inside the click
+  itself, before the site unmutes the video, so nothing plays at the wrong volume first, however
+  briefly. Feeds that unmute the next clip by themselves while you scroll are covered the same
+  way. Previously this took around 200ms, audible mainly on tabs turned down.
+- **Fixed: a tab whose slider could stop working for good.** When a capture stream died at an
+  unlucky moment (switching to the next episode, for example), volume changes went to an audio
+  engine that no longer existed, and reloading the page did not help. The extension now notices
+  and starts over: the first slider move repairs such a tab.
+- **Clearer wording when a page already processes its own audio.** The old note blamed "another
+  app", sending you hunting for a program that does not exist; some sites route their video
+  sound through their own processing. The note now leads with what matters: the boost is on,
+  only fullscreen is unavailable.
+- **Limits on what a page can make the extension do.** Hooks are created at most at a bounded
+  rate and count per page, so a misbehaving site cannot pile up audio processing behind the
+  scenes.
+
 ## 1.1.6 - 2026-07-28
 
 - **The popup now shows the installed version** and links to the source code on GitHub, so you can

@@ -24,11 +24,46 @@
     el: null, engaged: false, useLimiter: true, mo: null
   };
 
+  // The last AudioContext this frame confirmed RUNNING. One context can host any number of
+  // graphs, so we keep the proven one instead of building a fresh (and initially SUSPENDED) one
+  // per hook: resuming is asynchronous, and on a page with no user activation yet it may not
+  // succeed at all. Reusing it is what lets a hook be created synchronously (see preHook).
+  let hotCtx = null;
+  // A context that is being wired into a new graph right now. It has no graph pointing at it yet,
+  // so the reclaim pass below would happily close it - which silences every element on it.
+  let ctxPin = null;
+  // Elements this frame has ever routed through createMediaElementSource. The hook is one-shot,
+  // so a second attempt on the same element throws - and reporting that as 'already-hooked' would
+  // tell the user another app owns their player. Ours must never masquerade as someone else's.
+  const ours = new WeakSet();
+
+  // A context is only closed once nothing is on it any more.
+  function ctxInUse(ctx) {
+    return ctx === ctxPin || S.ctx === ctx || retired.some((g) => g.ctx === ctx);
+  }
+
   function makeLimiter(ctx) {
     const c = ctx.createDynamicsCompressor();
     c.threshold.value = -3; c.knee.value = 0; c.ratio.value = 20;
     c.attack.value = 0.003; c.release.value = 0.25;
     return c;
+  }
+
+  // ONE wiring block for every fresh hook - the worker's engage AND the in-page gesture/unmute
+  // paths. Static graph: the limiter is ALWAYS in the path (src→gain→limiter→analyser→destination),
+  // toggled by ramping its ratio rather than rewiring, so toggling can't click; the analyser is a
+  // passthrough that also feeds the output. Shared so the synchronous paths can never wire a
+  // subtly different (and untested) graph than the one the slow path is verified with.
+  function buildGraph(node, el, gain) {
+    const ctx = node.context;
+    S.ctx = ctx; S.src = node; S.el = el;
+    S.gain = ctx.createGain(); S.gain.gain.value = gain;
+    S.limiter = makeLimiter(ctx);
+    S.analyser = ctx.createAnalyser(); S.analyser.fftSize = 256;
+    S.src.connect(S.gain);
+    S.gain.connect(S.limiter);
+    S.limiter.connect(S.analyser);
+    S.analyser.connect(ctx.destination);
   }
 
   // Rank media elements: prefer playing, then audible, then biggest.
@@ -151,7 +186,10 @@
   // full window would only stall the worker's restore lock for a result we already know. The
   // analyser only confirms audio for display (it never decides), so a short look suffices there.
   const measureBudget = (el) => (el.muted || el.volume === 0 || el.paused ? 150 : 1200);
-  function measure(timeout = 1200) {
+  // full=true watches the WHOLE window and reports the peak instead of settling on the first
+  // sign of signal: the early exit fires on the first non-silent frame, which may still be on
+  // the gain ramp - useless when the caller wants to judge the LEVEL, not just presence.
+  function measure(timeout = 1200, full = false) {
     return new Promise((res) => {
       const buf = new Float32Array(S.analyser.fftSize);
       let peak = 0;
@@ -163,8 +201,8 @@
           for (let i = 0; i < buf.length; i++) s += buf[i] * buf[i];
           const rms = Math.sqrt(s / buf.length);
           if (rms > peak) peak = rms;
-          if (peak > 0.0008) return res({ signal: true, rms: peak });
-          if (performance.now() - t0 > timeout) return res({ signal: false, rms: peak });
+          if (!full && peak > 0.0008) return res({ signal: true, rms: peak });
+          if (performance.now() - t0 > timeout) return res({ signal: peak > 0.0008, rms: peak });
         } catch (_) {
           return res({ signal: false, rms: peak }); // graph torn down mid-measure → settle, don't hang
         }
@@ -176,19 +214,20 @@
   }
 
   // Retired hooks: elements that were swapped out or superseded. createMediaElementSource is
-  // one-shot and closing a ctx silences its element FOREVER, so a retired graph is parked at
-  // unity (transparent) with its ctx kept OPEN, and re-adopted by engage() if its element comes
+  // one-shot and disconnecting or closing a graph silences its element FOREVER, so a retired
+  // graph stays wired with its ctx kept OPEN, and is re-adopted by engage() if its element comes
   // back (theater-mode re-parenting, episode flip that reuses the node, a long detach). Bounded:
   // beyond 3 parked graphs the oldest is closed for real - its element is long gone by then.
+  //
+  // A parked graph keeps THE TAB'S LEVEL rather than dropping to unity. The outgoing element is
+  // usually idle, but preHook retires on pointerdown - before the site has paused anything - and
+  // a ducked tab jumping to native level for even a few frames is exactly the ear-blast this
+  // path exists to remove. It is also the right level for an element that comes back: it resumes
+  // boosted (or ducked) instead of native. stop() unwinds parked graphs on release.
   const retired = [];
   function retireCurrent() {
     try { if (S.mo) S.mo.disconnect(); } catch (_) {}
     if (S.ctx) {
-      try {
-        S.gain.gain.setTargetAtTime(1, S.ctx.currentTime, 0.02);
-        S.limiter.ratio.setTargetAtTime(1, S.ctx.currentTime, 0.02);
-        S.limiter.threshold.setTargetAtTime(0, S.ctx.currentTime, 0.02);
-      } catch (_) {}
       retired.push({ ctx: S.ctx, src: S.src, gain: S.gain, limiter: S.limiter, analyser: S.analyser, el: S.el });
       // Reclaim only graphs whose element has really left the DOM: the engage-switch path parks
       // elements that are still attached (merely paused), and closing THEIR ctx would silence
@@ -199,7 +238,12 @@
         if (idx < 0) break;
         const g = retired.splice(idx, 1)[0];
         try { g.src.disconnect(); } catch (_) {}
-        try { g.ctx.close(); } catch (_) {}
+        // Graphs share a context now, so closing it here would silence the elements of every
+        // OTHER graph on it - permanently, since the hook can't be redone.
+        if (!ctxInUse(g.ctx)) {
+          try { g.ctx.close(); } catch (_) {}
+          if (hotCtx === g.ctx) hotCtx = null;
+        }
       }
     }
     S.ctx = S.src = S.gain = S.limiter = S.analyser = S.el = S.mo = null;
@@ -263,6 +307,10 @@
     if (!e.isTrusted || (e.type === "keydown" && e.repeat)) return;
     lastGestureAt = performance.now();
     gestureUrgentLeft = 2;
+    // Still inside the pointerdown task, ahead of the page's own click handler: the only moment
+    // at which the boost can be in place BEFORE the site unmutes. Failures are non-events - the
+    // ping below is the same path as before.
+    if (e.type === "pointerdown") { try { preHook(e); } catch (_) {} }
     // A gesture is also what unblocks an AudioContext that engage() found suspended, so this is
     // the moment to retry (see armGestureRetry).
     if (gestureArmed) { gestureArmed = false; pingNavigated(true); }
@@ -355,15 +403,182 @@
     const el = e.target;
     if (!el || el.tagName !== "VIDEO" && el.tagName !== "AUDIO") return;
     if (el === S.el) return;
-    pingNavigated(!el.muted && el.volume > 0 && !el.paused);
+    const audible = !el.muted && el.volume > 0 && !el.paused;
+    // A feed unmuting its next clip on its own: no gesture happened, so preHook never saw this
+    // element. Take it here instead of waking the worker and waiting out the roundtrip.
+    if (audible && autoHook(el)) return;
+    pingNavigated(audible);
   }, true);
   // SPA route changes that fire DOM-visible events. (history.pushState is invisible
   // from this isolated world - the worker catches those via tabs.onUpdated url changes.)
   window.addEventListener("popstate", pingNavigated);
   window.addEventListener("hashchange", pingNavigated);
 
+  // --- pre-hook -----------------------------------------------------------
+  // Normally the boost lands like this: the site unmutes → we notice → the worker is woken →
+  // it probes → it sends engage. That roundtrip is about 200ms, and on a tab turned DOWN those
+  // 200ms play at full native level, on every single click. The fix is to do the work inside the
+  // gesture itself: pointerdown runs before the page's own click handler, so the gain node can
+  // already be in place by the time the site unmutes. The element is muted while we hook it, so
+  // nothing is audible either way - the boost is simply already there when the sound arrives.
+  //
+  // Everything here has to be decidable SYNCHRONOUSLY. An await would put us back behind the
+  // unmute, and worse, half of these decisions guard a one-shot, irreversible hook. So every
+  // uncertainty means: do nothing, and let the ordinary (slower, but fully checked) path handle
+  // it. Doing nothing costs 200ms; guessing wrong costs a permanently silent element.
+  let armedGain = null;   // level the worker last engaged this frame at (null = not our frame)
+  let armedLimiter = true;
+  let cmdBusy = 0;        // an engage/stop is mid-flight and owns S
+
+  // A same-origin src is only safe once the redirect probe has cleared it, and that probe is
+  // async. Positives are cached for the page's life and the probe handler warms every visible
+  // candidate, so by the time the user clicks, the answer is usually already in hand.
+  const chainOkNow = (src) => { const e = chainVerdicts.get(src); return !!(e && e.ok === true); };
+
+  // The media element the user is actually pointing at. Nothing beyond the pointer is guessed -
+  // the hook is one-shot, so we only ever spend it on an element that is genuinely under it.
+  const isMedia = (n) => !!n && (n.tagName === "VIDEO" || n.tagName === "AUDIO");
+  // Hit-testing, piercing shadow roots. A player that keeps its video in a shadow root reports
+  // only its HOST from document.elementsFromPoint, so without descending we would never find the
+  // video behind that player's own click catcher. Open roots only (a closed one is unreachable by
+  // design) and shallow, since this runs on the input path.
+  function mediaAtPoint(root, x, y, depth, seen) {
+    if (seen.has(root)) return null;
+    seen.add(root);
+    let stack;
+    try { stack = root.elementsFromPoint(x, y); } catch (_) { return null; }
+    for (const n of stack) if (isMedia(n)) return n;
+    if (depth >= 3) return null;
+    for (const n of stack) {
+      // ShadowRoot.elementsFromPoint also returns the HOST and elements OUTSIDE the queried root
+      // (long-standing Chrome quirk), so without the visited set every recursion level would
+      // re-descend every other overlapping host: ~N^3 forced hit tests for N stacked open hosts,
+      // measured at seconds of jank inside a single pointerdown. The set bounds the whole walk
+      // to one visit per root, ~N+1 calls.
+      if (!n.shadowRoot || seen.has(n.shadowRoot)) continue;
+      const hit = mediaAtPoint(n.shadowRoot, x, y, depth + 1, seen);
+      if (hit) return hit;
+    }
+    return null;
+  }
+  function mediaUnderPointer(e) {
+    // The composed path is the precise answer whenever the media element IS the target or an
+    // ancestor of it, and it reaches into shadow trees for free.
+    const path = typeof e.composedPath === "function" ? e.composedPath() : [];
+    for (const n of path) if (isMedia(n)) return n;
+    // Otherwise the target is a transparent cover painted over the video, which is how most real
+    // players are built. Then only the point itself knows.
+    if (typeof e.clientX !== "number") return null;
+    return mediaAtPoint(document, e.clientX, e.clientY, 0, new Set());
+  }
+
+  // Everything the one-shot hook needs to be safe, decided without a single await.
+  function hookableNow(el) {
+    const a = assess(el);
+    if (!a.safe) return false;
+    if (a.reason === "same-origin" && !chainOkNow(el.currentSrc || el.src || "")) return false;
+    return true;
+  }
+
+  // Ceiling on IN-PAGE hook minting. Parked graphs of still-connected elements can never be
+  // reclaimed (closing their ctx silences them permanently), so on a feed that keeps every
+  // clicked video in the DOM each in-page hook grows retired[] by one - and unlike the worker
+  // path, the page controls how often the in-page paths fire. Past the ceiling they refuse and
+  // the signal falls back to the ping: boosting still works, at worker pace (~200ms) and
+  // worker-rate-limited growth, exactly the pre-1.1.7 behavior. Re-adopting a parked graph
+  // never grows the list and stays allowed.
+  const PARK_MAX = 16;
+
+  // Move the hook onto `el` and apply the armed level. Returns false if the element could not be
+  // taken, in which case nothing has been changed.
+  function adopt(el) {
+    // Was this element hooked before and merely parked (scrolled out and back)? Then re-adopt
+    // its graph - a second createMediaElementSource on the same element throws.
+    let node = null;
+    if (!retired.some((g) => g.el === el)) {
+      // Checked BEFORE creating the source node: createMediaElementSource reroutes the element
+      // the moment it exists, so bailing after creating it would leave the element silent.
+      if (retired.length >= PARK_MAX) return false;
+      // Build the source node BEFORE anything is torn down: if the element turns out to be
+      // hooked already (by us with a lost graph, or by the page itself), this throws and the
+      // live hook is left exactly as it was.
+      try { node = hotCtx.createMediaElementSource(el); } catch (_) { return false; }
+      ours.add(el);
+      // No graph points at that node yet, so the reclaim pass inside retireCurrent could close
+      // its context out from under it.
+      ctxPin = hotCtx;
+    }
+    retireCurrent();
+    ctxPin = null;
+    if (node) {
+      buildGraph(node, el, armedGain);
+    } else {
+      const g = retired.splice(retired.findIndex((x) => x.el === el), 1)[0];
+      S.ctx = g.ctx; S.src = g.src; S.gain = g.gain; S.limiter = g.limiter; S.analyser = g.analyser; S.el = g.el;
+    }
+    // Set, not ramped: the element is silent right now, so there is nothing to glide from, and a
+    // ramp would still be climbing when the site unmutes.
+    S.useLimiter = armedLimiter;
+    try { S.gain.gain.setValueAtTime(armedGain, S.ctx.currentTime); } catch (_) {}
+    applyLimiter(armedLimiter, true);
+    S.engaged = true;
+    watchElement(el);
+    return true;
+  }
+
+  function preHook(e) {
+    // Cheap gates first: this runs on every pointerdown anywhere in the frame, and the element
+    // lookup below forces a layout.
+    if (armedGain == null || cmdBusy) return;
+    if (!hotCtx || hotCtx.state !== "running") return;
+    const el = mediaUnderPointer(e);
+    if (!el || el === S.el) return; // already ours → the gain node is applying it already
+    if (!hookableNow(el)) return;
+    adopt(el);
+  }
+
+  // Feeds that unmute the next clip BY THEMSELVES as you scroll never reach preHook: there is no
+  // pointer event to hang it on. The unmute itself is then the only signal there is, and it
+  // arrives in the volumechange listener below. Taking the hook right there is the same trade as
+  // preHook, one step later: the gain node lands in the same render quantum the unmute takes
+  // effect in, instead of a worker roundtrip later.
+  //
+  // Budgeted, because unlike a gesture this is a plain property write, which a page can produce
+  // at will, and every hook it triggers is one-shot and irreversible. 12 in a rolling 10s is far
+  // above any human scrolling rate. Once it is spent the signal degrades to the ping it was
+  // before: correct, just back to ~200ms.
+  const AUTO_HOOK_WINDOW = 10000;
+  let autoHookBudget = 12;
+  let autoHookReset = 0;
+  function autoHook(el) {
+    if (armedGain == null || cmdBusy) return false;
+    if (!hotCtx || hotCtx.state !== "running") return false;
+    // The same rule the worker's engage switch follows: never take the hook off an element that
+    // is still playing. An ad starting over a running video would otherwise steal it, and unlike
+    // a click there is no user intent here to justify that.
+    const cur = S.el;
+    if (S.engaged && cur && cur.isConnected && !cur.paused && !cur.ended) return false;
+    if (!hookableNow(el)) return false;
+    const now = performance.now();
+    if (now > autoHookReset) { autoHookBudget = 12; autoHookReset = now + AUTO_HOOK_WINDOW; }
+    if (autoHookBudget <= 0) return false;
+    // Charged only for a hook actually MINTED. The budget bounds the irreversible resource (a
+    // one-shot createMediaElementSource per element); a failed adopt mints nothing, so it costs
+    // nothing - otherwise a page whose own player fades el.volume (its element is foreign-hooked,
+    // so every attempt throws) would drain the whole allowance for free and push every genuine
+    // unmute back onto the slow path. Refusals above cost nothing for the same reason.
+    if (!adopt(el)) return false;
+    autoHookBudget--;
+    return true;
+  }
+
   async function engage(gain, useLimiter) {
     S.useLimiter = useLimiter !== false;
+    // The level belongs to the TAB, so every graph in this frame carries it, parked ones
+    // included. Their elements are usually idle, but preHook parks on pointerdown - before the
+    // site has paused anything - so a parked element can still be audible, and one that resumes
+    // later must not come back at a level the user has since moved away from.
+    for (const g of retired) setLevel(g, gain, S.useLimiter);
 
     // Already hooked → normally just update gain (no re-hook, no disconnect click). But first
     // check the page didn't move on to a NEW element while keeping the old node in the DOM
@@ -391,7 +606,13 @@
         applyLimiter(S.useLimiter, false);
         return { ok: true, engaged: true };
       }
-      retireCurrent(); // park the idle hook at unity and fall through to hook the live element
+      // The outgoing graph is parked AS-IS, so it must carry the level of THIS engage, not the
+      // one it was last set to: the user may have moved the slider since (say 5.0 down to 1.5),
+      // and a non-pointer resume of the old element later (playlist loop, keyboard play, media
+      // session) fires no signal that would correct it - it would blast the stale level while
+      // the popup shows the new one. The retired-sync loop above ran before this graph joined.
+      setLevel(S, gain, S.useLimiter);
+      retireCurrent(); // park the outgoing hook at the tab level; fall through to hook the live element
     }
 
     const el = pickElement();
@@ -404,6 +625,7 @@
       const g = retired.splice(back, 1)[0];
       S.ctx = g.ctx; S.src = g.src; S.gain = g.gain; S.limiter = g.limiter; S.analyser = g.analyser; S.el = g.el;
       try { await S.ctx.resume(); } catch (_) {}
+      if (S.ctx.state === "running") hotCtx = S.ctx;
       S.gain.gain.setTargetAtTime(gain, S.ctx.currentTime, 0.02);
       applyLimiter(S.useLimiter, false);
       S.engaged = true;
@@ -419,18 +641,25 @@
     if (a.reason === "same-origin" && !(await sameOriginChainOk(probedSrc)))
       return { ok: false, reason: "cross-origin-redirect" };
 
-    let ctx;
-    try { ctx = new (window.AudioContext || window.webkitAudioContext)(); }
-    catch { return { ok: false, reason: "no-audiocontext" }; }
+    // Reuse the frame's proven context when there is one. A fresh context starts SUSPENDED, so
+    // the resume dance below costs time on every hook and, on a page the autoplay policy hasn't
+    // unlocked yet, refuses outright. Reusing a context we already watched reach 'running' skips
+    // both - and it is the same reuse that makes the synchronous pre-hook possible.
+    let ctx = hotCtx && hotCtx.state === "running" ? hotCtx : null;
+    const freshCtx = !ctx;
+    if (freshCtx) {
+      try { ctx = new (window.AudioContext || window.webkitAudioContext)(); }
+      catch { return { ok: false, reason: "no-audiocontext" }; }
 
-    // Confirm the context can actually RUN before hooking - hooking into a suspended
-    // context would silence the element. If it won't run, bail (nothing hooked yet).
-    try { await ctx.resume(); } catch (_) {}
-    if (ctx.state !== "running") await new Promise((r) => setTimeout(r, 150));
-    if (ctx.state !== "running") {
-      try { ctx.close(); } catch (_) {}
-      armGestureRetry(); // first click/key in this frame unlocks audio → auto-retry then
-      return { ok: false, reason: "suspended" };
+      // Confirm the context can actually RUN before hooking - hooking into a suspended
+      // context would silence the element. If it won't run, bail (nothing hooked yet).
+      try { await ctx.resume(); } catch (_) {}
+      if (ctx.state !== "running") await new Promise((r) => setTimeout(r, 150));
+      if (ctx.state !== "running") {
+        try { ctx.close(); } catch (_) {}
+        armGestureRetry(); // first click/key in this frame unlocks audio → auto-retry then
+        return { ok: false, reason: "suspended" };
+      }
     }
 
     // Final pre-hook re-check: the probe/resume awaits above can take up to CHAIN_TOTAL_MAX (a
@@ -440,24 +669,23 @@
     // next engage re-gates the new src.
     const a2 = assess(el);
     if (!a2.safe || (el.currentSrc || el.src || "") !== probedSrc) {
-      try { ctx.close(); } catch (_) {}
+      if (freshCtx) { try { ctx.close(); } catch (_) {} } // a shared context still has graphs on it
       return { ok: false, reason: "src-changed" };
     }
 
     let src;
     try { src = ctx.createMediaElementSource(el); }
-    catch { try { ctx.close(); } catch (_) {} return { ok: false, reason: "already-hooked" }; }
+    catch {
+      if (freshCtx) { try { ctx.close(); } catch (_) {} }
+      // A hook of OURS whose graph is gone (parked, then reclaimed after its element left the
+      // DOM). Retrying can't undo a one-shot hook, but it is not the foreign-app conflict the
+      // popup explains to the user either - so say which one it is.
+      return { ok: false, reason: ours.has(el) ? "own-hook-lost" : "already-hooked" };
+    }
+    ours.add(el);
+    hotCtx = ctx;
 
-    S.ctx = ctx; S.src = src; S.el = el;
-    S.gain = ctx.createGain(); S.gain.gain.value = gain;
-    S.limiter = makeLimiter(ctx);
-    S.analyser = ctx.createAnalyser(); S.analyser.fftSize = 256;
-    // Static graph - the limiter is ALWAYS in the path (src→gain→limiter→analyser→destination);
-    // it's toggled by ramping its ratio, never by rewiring, so toggling can't click.
-    S.src.connect(S.gain);
-    S.gain.connect(S.limiter);
-    S.limiter.connect(S.analyser);
-    S.analyser.connect(ctx.destination); // analyser is a passthrough → also feeds output
+    buildGraph(src, el, gain);
     applyLimiter(S.useLimiter, true);
     S.engaged = true;
     watchElement(el);
@@ -470,12 +698,21 @@
   // level/frequency-transparent (a constant ~6ms compressor pre-delay remains, but it's imperceptible).
   // createMediaElementSource can't be un-hooked, and closing the context would silence the rerouted
   // element, so we keep the context open at unity. Ramping (not disconnecting) → no click on release.
-  function stop() {
-    if (!S.engaged || !S.ctx) return { ok: true };
+  function setLevel(g, gain, limiterOn) {
     try {
-      S.gain.gain.setTargetAtTime(1, S.ctx.currentTime, 0.02);
-      applyLimiter(false, false);
+      g.gain.gain.setTargetAtTime(gain, g.ctx.currentTime, 0.02);
+      g.limiter.ratio.setTargetAtTime(limiterOn ? 20 : 1, g.ctx.currentTime, 0.02);
+      g.limiter.threshold.setTargetAtTime(limiterOn ? -3 : 0, g.ctx.currentTime, 0.02);
     } catch (_) {}
+  }
+  const unwind = (g) => setLevel(g, 1, false);
+  function stop() {
+    armedGain = null; // this frame is no longer the tab's boosted one → no pre-hooking on its own
+    // Parked graphs hold the tab's level now, so a release has to reach them too: otherwise an
+    // element that resumes later would still be boosted while the popup reads 1.0×.
+    for (const g of retired) unwind(g);
+    if (!S.engaged || !S.ctx) return { ok: true };
+    unwind(S);
     return { ok: true };
   }
 
@@ -483,9 +720,13 @@
   // the S.engaged check and race createMediaElementSource - the loser would throw and be
   // misreported as an 'already-hooked' CONFLICT, making the worker stack capture on top of the
   // live element hook (double gain). The queue makes the second call see the first one's result.
+  // cmdBusy marks the window in which the queued call owns S: preHook runs OUTSIDE this queue
+  // (it has to, a gesture can't wait) and must never retire a graph an in-flight engage is
+  // halfway through building.
   let cmdChain = Promise.resolve();
   function enqueue(fn) {
-    const p = cmdChain.then(fn, fn);
+    const run = () => { cmdBusy++; return Promise.resolve().then(fn).finally(() => { cmdBusy--; }); };
+    const p = cmdChain.then(run, run);
     cmdChain = p.then(() => {}, () => {});
     return p;
   }
@@ -556,7 +797,14 @@
       // The .catch guarantees a response even if engage throws - otherwise the worker's await
       // would hang forever (it holds the 'restoring' lock during reload-restores).
       enqueue(() => engage(msg.gain, msg.useLimiter))
-        .then(sendResponse)
+        .then((res) => {
+          // Arm the pre-hook. A successful engage is the worker telling this frame two things:
+          // it is the tab's element-mode frame, and this is the level. Only an armed frame may
+          // hook on its own - a frame the worker has since routed to capture must not stack an
+          // element hook underneath the capture gain (that would be double volume).
+          if (res && res.ok) { armedGain = msg.gain; armedLimiter = msg.useLimiter !== false; }
+          sendResponse(res);
+        })
         .catch(() => { try { sendResponse({ ok: false, reason: "error" }); } catch (_) {} });
       return true;
     }
@@ -564,6 +812,20 @@
       enqueue(async () => stop())
         .then(sendResponse)
         .catch(() => { try { sendResponse({ ok: true }); } catch (_) {} });
+      return true;
+    }
+    if (msg.cmd === "measure") {
+      // Read-only look at the LIVE graph: is audio flowing, and how loud after the gain? Unlike
+      // engage this never touches the level, so it can verify what the in-page paths (preHook /
+      // autoHook) applied on their own - engage would overwrite the very value under test.
+      // Queued like the others so it can't read a graph an engage is halfway through replacing.
+      enqueue(async () => {
+        if (!S.engaged || !S.analyser) return { ok: false, parked: retired.length };
+        const m = await measure(600, true);
+        return { ok: true, signal: m.signal, rms: m.rms, parked: retired.length };
+      })
+        .then(sendResponse)
+        .catch(() => { try { sendResponse({ ok: false }); } catch (_) {} });
       return true;
     }
   });

@@ -4,7 +4,7 @@ Tab Volume Booster ti permette di alzare il volume di qualsiasi scheda del brows
 • Abbassa la base musicale sotto il tuo strumento: perfetto per esercitarti suonandoci sopra, quando vuoi la canzone in sottofondo rispetto alla tua chitarra.
 • Compatibile con lo schermo intero: su YouTube e sulla maggior parte dei siti regola direttamente l'audio della pagina, così lo schermo intero nativo continua a funzionare anche durante il boost.
 • Per scheda: ogni scheda ricorda il proprio livello; nulla viene condiviso e tutto viene dimenticato quando chiudi la scheda.
-• Robusto: sopravvive ai ricaricamenti della pagina e al passaggio all'“episodio successivo”, segue il video anche quando il player viene sostituito e include un limiter integrato per contenere la distorsione ai boost più spinti.
+• Sopravvive ai ricaricamenti della pagina e al passaggio all'“episodio successivo”, segue il video anche quando il player viene sostituito e include un limiter integrato per contenere la distorsione ai boost più spinti.
 • Torni al volume normale con un clic.
 • Disponibile in 14 lingue. Le traduzioni sono contributi della community: per aggiungere la tua, dai un'occhiata al repo GitHub.
 

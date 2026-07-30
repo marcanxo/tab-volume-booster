@@ -48,13 +48,13 @@
     "message": "Pantalla completa · en pausa"
   },
   "modePausedTitleConflict": {
-    "message": "Otra aplicación está usando el audio de esta pestaña. La amplificación está en pausa para que la pantalla completa nativa siga funcionando."
+    "message": "Esta página ya gestiona su propio audio (o lo hace otra aplicación). La amplificación está en pausa para que la pantalla completa nativa siga funcionando."
   },
   "modePausedTitlePref": {
     "message": "«Priorizar pantalla completa» está activado en esta pestaña, así que el nivel de volumen no se aplica mediante captura."
   },
   "pausedMsgConflict": {
-    "message": "Otra aplicación ya está usando el audio de esta pestaña. La amplificación está en pausa para que la pantalla completa siga funcionando. Desactiva «Priorizar pantalla completa» para amplificar mediante captura (sin pantalla completa)."
+    "message": "Esta página ya gestiona su propio audio (o lo hace otra aplicación), así que amplificar requeriría capturar la pestaña. La amplificación está en pausa para conservar la pantalla completa: desactiva «Priorizar pantalla completa» para amplificar igualmente (sin pantalla completa)."
   },
   "pausedMsgPref": {
     "message": "«Priorizar pantalla completa» está activado en esta pestaña, así que el nivel no se aplica mediante captura. Desactívalo para ajustar el volumen de esta página (la pantalla completa no está disponible durante la captura)."
@@ -69,10 +69,10 @@
     "message": "Esta fuente no se puede intervenir directamente (DRM, otro origen o sin elemento), así que se usa la captura de pestaña. La pantalla completa está desactivada mientras se amplifica; baja a 1.0× para usarla."
   },
   "modeCaptureTitleConflict": {
-    "message": "Otra aplicación está usando el audio de esta pestaña, así que se amplifica mediante captura. La pantalla completa está desactivada mientras se amplifica."
+    "message": "La amplificación está activa, pero sin pantalla completa: esta página ya gestiona su propio audio (o lo hace otra aplicación), así que se usa la captura de pestaña."
   },
   "captureMsgConflict": {
-    "message": "Otra aplicación ya está usando el audio de esta pestaña, así que se amplifica mediante captura y la pantalla completa no está disponible. Activa «Priorizar pantalla completa» para mantenerla (sin amplificación)."
+    "message": "La amplificación está activa, pero la pantalla completa no está disponible: esta página ya gestiona su propio audio (o lo hace otra aplicación), así que se usa la captura de pestaña. Activa «Priorizar pantalla completa» para conservar la pantalla completa (sin amplificar)."
   },
   "modeNone": {
     "message": "Sin amplificar"

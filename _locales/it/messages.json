@@ -48,13 +48,13 @@
     "message": "Schermo intero · boost sospeso"
   },
   "modePausedTitleConflict": {
-    "message": "Un'altra app sta usando l'audio di questa scheda. Il boost è sospeso per mantenere lo schermo intero nativo."
+    "message": "Questa pagina gestisce già il proprio audio (o lo fa un'altra app). Il boost è in pausa per non perdere lo schermo intero nativo."
   },
   "modePausedTitlePref": {
     "message": "“Preferisci schermo intero” è attivo per questa scheda, quindi il livello del volume non viene applicato tramite cattura."
   },
   "pausedMsgConflict": {
-    "message": "Un'altra app sta già usando l'audio di questa scheda. Il boost è sospeso per non perdere lo schermo intero: disattiva “Preferisci schermo intero” per applicare comunque il boost tramite cattura (schermo intero non disponibile)."
+    "message": "Questa pagina gestisce già il proprio audio (o lo fa un'altra app), quindi il boost richiederebbe la cattura della scheda. Il boost è in pausa per mantenere lo schermo intero: disattiva “Preferisci schermo intero” per potenziare comunque (senza schermo intero)."
   },
   "pausedMsgPref": {
     "message": "“Preferisci schermo intero” è attivo per questa scheda, quindi il livello non viene applicato tramite cattura. Disattivalo per regolare il volume di questa pagina (lo schermo intero non è disponibile durante la cattura)."
@@ -69,10 +69,10 @@
     "message": "Questa sorgente non può essere agganciata direttamente (DRM, cross-origin o nessun elemento), quindi viene usata la cattura della scheda. Lo schermo intero è disattivato durante il boost: torna a 1.0× per riattivarlo."
   },
   "modeCaptureTitleConflict": {
-    "message": "Un'altra app sta usando l'audio di questa scheda, quindi il boost avviene tramite cattura. Lo schermo intero è disattivato durante il boost."
+    "message": "Il boost è attivo, ma non a schermo intero: questa pagina gestisce già il proprio audio (o lo fa un'altra app), quindi si usa la cattura della scheda."
   },
   "captureMsgConflict": {
-    "message": "Un'altra app sta già usando l'audio di questa scheda, quindi il boost avviene tramite cattura e lo schermo intero non è disponibile. Attiva “Preferisci schermo intero” per mantenerlo (senza boost)."
+    "message": "Il boost è attivo, ma lo schermo intero no: questa pagina gestisce già il proprio audio (o lo fa un'altra app), quindi si usa la cattura della scheda. Attiva “Preferisci schermo intero” per mantenere lo schermo intero (senza boost)."
   },
   "modeNone": {
     "message": "Boost non attivo"

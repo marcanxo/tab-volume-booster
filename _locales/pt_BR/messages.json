@@ -48,13 +48,13 @@
     "message": "Tela cheia mantida · pausado"
   },
   "modePausedTitleConflict": {
-    "message": "Outro app está usando o áudio desta aba. O aumento fica pausado para que a tela cheia nativa continue funcionando."
+    "message": "Esta página já cuida do próprio áudio (ou outro aplicativo faz isso). O aumento está pausado para que a tela cheia nativa continue funcionando."
   },
   "modePausedTitlePref": {
     "message": "“Priorizar tela cheia” está ativado nesta aba, então o nível de volume não é aplicado via captura."
   },
   "pausedMsgConflict": {
-    "message": "Outro app já está usando o áudio desta aba. O aumento fica pausado para manter a tela cheia funcionando - desative “Priorizar tela cheia” para aumentar via captura (sem tela cheia)."
+    "message": "Esta página já cuida do próprio áudio (ou outro aplicativo faz isso), então aumentar o volume exigiria a captura da aba. O aumento está pausado para manter a tela cheia: desative “Priorizar tela cheia” para aumentar mesmo assim (sem tela cheia)."
   },
   "pausedMsgPref": {
     "message": "“Priorizar tela cheia” está ativado nesta aba, então o nível não é aplicado via captura. Desative para ajustar o volume nesta página (a tela cheia fica indisponível durante a captura)."
@@ -69,10 +69,10 @@
     "message": "Esta fonte não pode ser ajustada diretamente (DRM, outra origem ou sem elemento de mídia), por isso a captura da aba é usada. A tela cheia fica desativada durante o aumento; volte para 1.0× para usar a tela cheia."
   },
   "modeCaptureTitleConflict": {
-    "message": "Outro app está usando o áudio desta aba, então o aumento é feito via captura. A tela cheia fica desativada durante o aumento."
+    "message": "O aumento está ativo, mas sem tela cheia: esta página já cuida do próprio áudio (ou outro aplicativo faz isso), então a captura da aba é usada."
   },
   "captureMsgConflict": {
-    "message": "Outro app já está usando o áudio desta aba, então o aumento é feito via captura - a tela cheia fica indisponível. Ative “Priorizar tela cheia” para manter a tela cheia (sem aumento)."
+    "message": "O aumento está ativo, mas a tela cheia não está disponível: esta página já cuida do próprio áudio (ou outro aplicativo faz isso), então a captura da aba é usada. Ative “Priorizar tela cheia” para manter a tela cheia (sem aumento)."
   },
   "modeNone": {
     "message": "Sem aumento"

@@ -4,7 +4,7 @@ Tab Volume Booster te permite subir el volumen de cualquier pestaña del navegad
 • Baja una pista de acompañamiento por debajo de tu instrumento: ideal para practicar encima, cuando quieres oír la canción de fondo, por debajo de tu guitarra.
 • Compatible con la pantalla completa: en YouTube y en la mayoría de los sitios ajusta el audio de la propia página, así que la pantalla completa nativa sigue funcionando mientras amplificas.
 • Por pestaña: cada pestaña recuerda su propio nivel; no se comparte nada y se olvida al cerrar la pestaña.
-• Robusto: sobrevive a las recargas de página y a las transiciones de «siguiente episodio», sigue el video incluso cuando se reemplaza el reproductor e incluye un limitador integrado para controlar la distorsión en amplificaciones fuertes.
+• Sobrevive a las recargas de página y a las transiciones de «siguiente episodio», sigue el video incluso cuando se reemplaza el reproductor e incluye un limitador integrado para controlar la distorsión en amplificaciones fuertes.
 • Un clic para restablecer el volumen normal.
 • Disponible en 14 idiomas. Las traducciones son contribuciones de la comunidad; visita el repositorio de GitHub para añadir la tuya.
 

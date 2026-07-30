@@ -48,13 +48,13 @@
     "message": "Pełny ekran · pauza wzmocnienia"
   },
   "modePausedTitleConflict": {
-    "message": "Inna aplikacja korzysta z dźwięku tej karty. Wzmocnienie wstrzymano, aby natywny pełny ekran nadal działał."
+    "message": "Ta strona sama obsługuje swój dźwięk (albo robi to inna aplikacja). Wzmocnienie jest wstrzymane, aby natywny pełny ekran nadal działał."
   },
   "modePausedTitlePref": {
     "message": "Opcja „Preferuj pełny ekran” jest włączona dla tej karty, więc poziom głośności nie jest stosowany przez przechwytywanie."
   },
   "pausedMsgConflict": {
-    "message": "Inna aplikacja już korzysta z dźwięku tej karty. Wzmocnienie wstrzymano, aby pełny ekran nadal działał - wyłącz „Preferuj pełny ekran”, aby wzmacniać przez przechwytywanie (bez pełnego ekranu)."
+    "message": "Ta strona sama obsługuje swój dźwięk (albo robi to inna aplikacja), więc wzmocnienie wymagałoby przechwytywania karty. Wzmocnienie jest wstrzymane, aby zachować pełny ekran: wyłącz „Preferuj pełny ekran”, aby wzmocnić mimo to (bez pełnego ekranu)."
   },
   "pausedMsgPref": {
     "message": "Opcja „Preferuj pełny ekran” jest włączona dla tej karty, więc poziom nie jest stosowany przez przechwytywanie. Wyłącz ją, aby regulować głośność na tej stronie (pełny ekran jest niedostępny podczas przechwytywania)."
@@ -69,10 +69,10 @@
     "message": "Tego źródła nie da się podpiąć bezpośrednio (DRM, inna domena lub brak elementu), więc używane jest przechwytywanie karty. Podczas wzmocnienia pełny ekran jest wyłączony - zejdź do 1.0×, aby go włączyć."
   },
   "modeCaptureTitleConflict": {
-    "message": "Inna aplikacja korzysta z dźwięku tej karty, więc wzmocnienie działa przez przechwytywanie. Podczas wzmocnienia pełny ekran jest wyłączony."
+    "message": "Wzmocnienie działa, ale bez pełnego ekranu: ta strona sama obsługuje swój dźwięk (albo robi to inna aplikacja), więc używane jest przechwytywanie karty."
   },
   "captureMsgConflict": {
-    "message": "Inna aplikacja już korzysta z dźwięku tej karty, więc wzmocnienie działa przez przechwytywanie - pełny ekran jest niedostępny. Włącz „Preferuj pełny ekran”, aby zachować pełny ekran (bez wzmocnienia)."
+    "message": "Wzmocnienie działa, ale pełny ekran nie: ta strona sama obsługuje swój dźwięk (albo robi to inna aplikacja), więc używane jest przechwytywanie karty. Włącz „Preferuj pełny ekran”, aby zamiast tego zachować pełny ekran (bez wzmocnienia)."
   },
   "modeNone": {
     "message": "Bez wzmocnienia"

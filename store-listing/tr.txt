@@ -4,7 +4,7 @@ Tab Volume Booster, herhangi bir tarayıcı sekmesinin sesini tek bir kaydırıc
 • Altyapıyı enstrümanınızın altında kalacak kadar KISIN: şarkının gitarınızın gerisinde hafif duyulmasını istediğiniz eşlikli pratikler için biçilmiş kaftan.
 • Tam ekran dostu: YouTube'da ve çoğu sitede sayfanın kendi sesini ayarlar; böylece ses artırılmışken yerel tam ekran çalışmaya devam eder.
 • Sekme başına: her sekme kendi düzeyini hatırlar; hiçbir şey paylaşılmaz ve sekmeyi kapattığınızda unutulur.
-• Dayanıklı: sayfa yenilemelerini ve “sonraki bölüm” geçişlerini sorunsuz atlatır, oynatıcı değiştirilse bile videoyu takip eder ve güçlü artırmalarda ses bozulmasını dizginleyen yerleşik bir sınırlayıcı içerir.
+• Sayfa yenilemelerini ve “sonraki bölüm” geçişlerini sorunsuz atlatır, oynatıcı değiştirilse bile videoyu takip eder ve güçlü artırmalarda ses bozulmasını dizginleyen yerleşik bir sınırlayıcı içerir.
 • Tek tıkla normale sıfırlama.
 • 14 dilde kullanılabilir. Çeviriler topluluk katkısıdır; kendi dilinizi eklemek için GitHub deposuna göz atın.
 

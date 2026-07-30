@@ -148,12 +148,20 @@ async function captureSetGain(tabId, gain, useLimiter) {
   if (createdFresh) await withActiveLock(() => setActive([])); // new doc → no graphs (same lock as mark/unmark)
   const active = await getActive();
   if (active.includes(tabId)) {
-    toOffscreen({ cmd: "update", tabId, gain, useLimiter });
-  } else {
-    const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tabId });
-    toOffscreen({ cmd: "start", tabId, streamId, gain, useLimiter });
-    await markActive(tabId);
+    // The active list can LIE: if the trackEnded message was lost (worker mid-restart when the
+    // capture died on a navigation), the entry stays while the graph is gone - and an update
+    // sent into that void leaves the slider dead for the TAB'S WHOLE LIFE, since a reload
+    // clears neither the list nor the tab id. So the update is acknowledged: no ack, no graph
+    // -> heal the entry and fall through to a fresh start.
+    const ack = await chrome.runtime
+      .sendMessage({ target: "offscreen", cmd: "update", tabId, gain, useLimiter })
+      .catch(() => null);
+    if (ack && ack.ok) return;
+    await unmarkActive(tabId);
   }
+  const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tabId });
+  toOffscreen({ cmd: "start", tabId, streamId, gain, useLimiter });
+  await markActive(tabId);
 }
 async function captureStop(tabId) { toOffscreen({ cmd: "stop", tabId }); await unmarkActive(tabId); }
 
@@ -391,9 +399,10 @@ async function restoreAfterLoad(tabId, gain, useLimiter, prior) {
         await reverifyGain(tabId, g, useLimiter, true);
         return;
       }
-      // The element can't be hooked safely (same-origin URL redirecting cross-origin): retrying
-      // can't change that - fall back to capture (no conflict), exactly like setGain would.
-      if (res && res.reason === "cross-origin-redirect") {
+      // The element can't be hooked safely (same-origin URL redirecting cross-origin), or its
+      // one-shot hook was ours and is spent ('own-hook-lost'). Retrying can't change either -
+      // fall back to capture (no conflict: nobody else owns the element), like setGain would.
+      if (res && (res.reason === "cross-origin-redirect" || res.reason === "own-hook-lost")) {
         await applyCaptureOrPause(tabId, g, useLimiter, false);
         await reverifyGain(tabId, g, useLimiter, false);
         return;
@@ -409,8 +418,15 @@ async function restoreAfterLoad(tabId, gain, useLimiter, prior) {
         return;
       }
       // 'suspended' (low-MEI: won't run without a gesture) can't improve by retrying. Clear the
-      // stale element mode so a popup reopen re-probes; don't fall back to capture.
-      if (res && res.reason === "suspended") { await clearMode(tabId); return; }
+      // stale element mode so a popup reopen re-probes; don't fall back to capture. Broadcast a
+      // stop FIRST: dropping the mode record also drops the frameId, so this is the last moment
+      // the worker can disarm a frame that an earlier engage armed - an armed frame it no longer
+      // tracks would keep self-hooking new elements at a level the slider no longer controls.
+      if (res && res.reason === "suspended") {
+        await toFrame(tabId, null, { cmd: "stop" });
+        await clearMode(tabId);
+        return;
+      }
       // "no element yet / player still initializing" → keep waiting.
     } else if (priorCapture) {
       // No hookable element and this tab genuinely needs capture → apply once (honors fsPriority;
@@ -425,6 +441,9 @@ async function restoreAfterLoad(tabId, gain, useLimiter, prior) {
   // hookable element in time. Do NOT force capture - that would disable native fullscreen on a tab
   // that was fullscreen-friendly. Leave the boost level stored but the mode cleared, so reopening
   // the popup re-probes (and the user can opt into capture there if they actually want it).
+  // Same disarm as the 'suspended' exit above: with the mode record goes the frameId, so any
+  // frame still armed from an earlier engage must stop self-hooking NOW or it never will.
+  await toFrame(tabId, null, { cmd: "stop" });
   await clearMode(tabId);
 }
 

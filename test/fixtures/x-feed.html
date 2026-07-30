@@ -7,6 +7,7 @@
   body { background: #15202b; color: #eee; font-family: sans-serif; margin: 0; padding: 20px; }
   .post { margin: 0 auto 24px; max-width: 560px; }
   video { width: 100%; height: 315px; background: #000; display: block; }
+  .cover { position: absolute; inset: 0; }
 </style>
 </head>
 <body>
@@ -18,13 +19,22 @@
   (async function () {
     const toneBlobUrl = URL.createObjectURL(await (await fetch("/tone.wav")).blob());
     let seq = 0;
+    const stash = new Map(); // posts taken out of the DOM but kept as the SAME nodes
+    const byId = new Map();  // every video ever made, including ones inside shadow roots
+    const find = (id) => byId.get(id) || document.getElementById(id);
+
+    function makeVideo(o) {
+      const v = document.createElement("video");
+      v.id = "v" + (++seq);
+      byId.set(v.id, v);
+      return v;
+    }
 
     function makePost(opts) {
       const o = opts || {};
       const post = document.createElement("div");
       post.className = "post";
-      const v = document.createElement("video");
-      v.id = "v" + (++seq);
+      const v = makeVideo(o);
       v.src = o.src || toneBlobUrl; // blob: like X's MSE-backed players (or a cross-origin ad URL)
       v.loop = true;
       v.playsInline = true;
@@ -38,6 +48,20 @@
         if (v.paused) v.play();
       });
       post.appendChild(v);
+      // Real feeds rarely put the click handler on the <video>: a transparent catcher sits on
+      // top of it, so the click target is a plain <div> and the video is only reachable by
+      // hit-testing the point. That is the case the pre-hook's element lookup has to survive.
+      if (o.overlay) {
+        const cover = document.createElement("div");
+        cover.className = "cover";
+        cover.addEventListener("click", () => {
+          v.muted = false;
+          v.volume = 1;
+          if (v.paused) v.play();
+        });
+        post.appendChild(cover);
+        post.style.position = "relative";
+      }
       document.getElementById("feed").appendChild(post);
       v.play().catch(() => {});
       return v;
@@ -48,24 +72,88 @@
       add() { return makePost({}).id; },
       // add an audibly-playing post
       addAudible() { return makePost({ muted: false }).id; },
+      // muted autoplaying post whose click handler sits on a transparent cover, not the video
+      addOverlay() { return makePost({ overlay: true }).id; },
+      // The reels pattern: a brand new element starts MUTED and the site unmutes it a moment
+      // later all by itself. No gesture anywhere, so the only signal is the unmute.
+      addReel() {
+        const v = makePost({});
+        setTimeout(() => { v.muted = false; v.volume = 1; }, 30);
+        return v.id;
+      },
+      // just the unmute half, on an element that already exists
+      unmute(id) {
+        const v = find(id);
+        if (v) { v.muted = false; v.volume = 1; }
+      },
+      // Player that keeps its video inside an OPEN shadow root, with its click catcher in there
+      // too. The composed path then reaches the cover but never the video (they are siblings),
+      // and document.elementsFromPoint reports only the host. Piercing is the only way in.
+      addShadow() {
+        const post = document.createElement("div");
+        post.className = "post";
+        const host = document.createElement("div");
+        const root = host.attachShadow({ mode: "open" });
+        const box = document.createElement("div");
+        box.style.cssText = "position:relative;display:block";
+        const v = makeVideo({});
+        v.src = toneBlobUrl;
+        v.loop = true;
+        v.playsInline = true;
+        v.muted = true;
+        v.style.cssText = "width:100%;height:315px;background:#000;display:block";
+        const cover = document.createElement("div");
+        cover.style.cssText = "position:absolute;inset:0";
+        cover.addEventListener("click", () => {
+          v.muted = false;
+          v.volume = 1;
+          if (v.paused) v.play();
+        });
+        box.append(v, cover);
+        root.appendChild(box);
+        post.appendChild(host);
+        document.getElementById("feed").appendChild(post);
+        v.play().catch(() => {});
+        return v.id;
+      },
       // remove a post from the DOM (virtualization scroll-out)
       remove(id) {
-        const v = document.getElementById(id);
-        if (v) v.closest(".post").remove();
+        const v = find(id);
+        if (v) (v.getRootNode().host || v).closest(".post").remove();
       },
       // pause a video WITHOUT any DOM change (X pauses off-screen videos)
       pause(id) {
-        const v = document.getElementById(id);
+        const v = find(id);
         if (v) v.pause();
       },
+      // resume without a gesture and without a volumechange
+      play(id) {
+        const v = find(id);
+        if (v) v.play().catch(() => {});
+      },
+      // The page routes its OWN element through its OWN AudioContext, like loudness normalizers
+      // do. From the extension's side the element is then foreign-hooked: any attempt throws.
+      hookSelf(id) {
+        const v = find(id);
+        if (!v) return false;
+        try {
+          const c = new (window.AudioContext || window.webkitAudioContext)();
+          c.createMediaElementSource(v).connect(c.destination);
+          return true;
+        } catch (_) { return false; }
+      },
       state(id) {
-        const v = document.getElementById(id);
+        const v = find(id);
         if (!v) return null;
         return { paused: v.paused, muted: v.muted, volume: v.volume, connected: v.isConnected };
       },
-      rect(id) {
-        const v = document.getElementById(id);
+      // centre of the video in viewport coordinates, after scrolling it into view - what the
+      // runner aims a trusted click at. Works for shadow-DOM players too, where the test can't
+      // reach the element with a selector.
+      point(id) {
+        const v = find(id);
         if (!v) return null;
+        v.scrollIntoView({ block: "center" });
         const r = v.getBoundingClientRect();
         return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
       },
@@ -80,12 +168,48 @@
         const ad = makePost({ muted: false, src });
         return ad.id;
       },
-      // add an audible playing post with an EXPLICIT src (same-origin file, or a same-origin URL
-      // that redirects cross-origin) - the blob: posts above never exercise the redirect probe
-      addSrc(url) { return makePost({ muted: false, src: url }).id; },
+      // add a playing post with an EXPLICIT src (same-origin file, or a same-origin URL that
+      // redirects cross-origin) - the blob: posts above never exercise the redirect probe.
+      // Audible unless opts says otherwise.
+      addSrc(url, opts) { return makePost(Object.assign({ muted: false, src: url }, opts || {})).id; },
+      // Take a post out of the DOM but KEEP the node, so the same element can come back later
+      // (SPA re-parenting, theater mode). remove() throws the node away instead.
+      detach(id) {
+        const v = find(id);
+        if (!v) return false;
+        const post = v.closest(".post");
+        stash.set(id, post);
+        post.remove();
+        return true;
+      },
+      reattach(id) {
+        const post = stash.get(id);
+        if (!post) return false;
+        stash.delete(id);
+        document.getElementById("feed").appendChild(post);
+        const v = find(id);
+        if (v) { v.muted = false; v.volume = 1; v.play().catch(() => {}); }
+        return true;
+      },
+      // Ownership probe, from the page's side. createMediaElementSource is one-shot, so a throw
+      // means something already owns this element's audio - the extension, since nothing else
+      // here hooks anything. DESTRUCTIVE when it returns false: we have then taken the element
+      // ourselves, so a scenario may only ask this as its last word about that element.
+      isHooked(id) {
+        const v = find(id);
+        if (!v) return null;
+        const c = new (window.AudioContext || window.webkitAudioContext)();
+        try {
+          c.createMediaElementSource(v).connect(c.destination);
+          return false;
+        } catch (_) {
+          c.close();
+          return true;
+        }
+      },
       // attach real (ClearKey) MediaKeys to a video so it reads as DRM to capability checks
       async makeDrm(id) {
-        const v = document.getElementById(id);
+        const v = find(id);
         const access = await navigator.requestMediaKeySystemAccess("org.w3.clearkey", [{
           initDataTypes: ["keyids"],
           audioCapabilities: [{ contentType: 'audio/mp4; codecs="mp4a.40.2"' }],
@@ -98,7 +222,7 @@
       // ad break ends: ad element is torn down, content resumes
       adEnd(adId, mainId) {
         window.feed.remove(adId);
-        const main = document.getElementById(mainId);
+        const main = find(mainId);
         if (main) { main.muted = false; main.volume = 1; main.play(); }
       }
     };

@@ -15,10 +15,10 @@ processing happens locally, in real time, on your device.
 
 That's it. These settings never leave your browser.
 
-## Data the extension does NOT do
-- ❌ No analytics, tracking, telemetry, or ads.
-- ❌ No external servers, accounts, or third-party services. Nothing is ever uploaded.
-- ❌ It does not record, save, or transmit any audio, page content, browsing history, or
+## What the extension does not do
+- No analytics, tracking, telemetry, or ads.
+- No external servers, accounts, or third-party services. Nothing is ever uploaded.
+- It does not record, save, or transmit any audio, page content, browsing history, or
   personal information.
 
 ## The one request it makes (and why)

@@ -19,7 +19,7 @@ It's a *hybrid*: per tab it automatically picks the boosting method that preserv
 - **Conflict handling.** If another app/extension already controls a tab's audio, you get a clear choice: boost via capture, or keep native fullscreen with no boost.
 - **Built-in limiter.** Tames distortion on hard boosts; toggle is click-free.
 - **One-click reset** back to 1× (off).
-- **Speaks your language.** The popup ships in 14 languages, auto-selected from your browser's language. Adding another is a single JSON file - see [TRANSLATING.md](TRANSLATING.md).
+- **Localized.** The popup ships in 14 languages, auto-selected from your browser's language. Adding another is a single JSON file - see [TRANSLATING.md](TRANSLATING.md).
 - **Private.** Nothing is uploaded: no analytics, no accounts, no third parties. The only thing stored is your per-tab level and the limiter preference, in Chrome's on-device extension storage. (The one request it ever makes is a same-origin redirect check against the site you're on - see [Privacy](#privacy).)
 
 ---
@@ -31,7 +31,7 @@ The little pill under the readout shows which mode the current tab is using:
 - **Fullscreen mode** (green) - hooks the page's own `<video>`/`<audio>` via Web Audio (`createMediaElementSource → gain → limiter`). No tab capture, so Chrome keeps the Fullscreen API available. Used on YouTube and most standard HTML5 video.
 - **Capture mode** (amber) - falls back to `chrome.tabCapture` when the element can't be hooked (DRM such as Netflix/Spotify, cross-origin media without CORS, or sites with no media element). Works on almost anything, but Chrome disables fullscreen while a tab is captured - drop to **1×** to get fullscreen back.
 
-The mode is chosen by a **non-destructive pre-check** (source origin / `crossOrigin` attribute / DRM state / whether an `AudioContext` can run). `createMediaElementSource` is one-shot and irreversible, so the extension only ever hooks elements that pass the pre-check - it never gambles a tab into silence.
+The mode is chosen by a **non-destructive pre-check** (source origin / `crossOrigin` attribute / DRM state / whether an `AudioContext` can run). `createMediaElementSource` is one-shot and irreversible, so the extension only ever hooks elements that pass the pre-check, and can't silence a tab by mistake.
 
 ---
 

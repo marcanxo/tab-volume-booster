@@ -97,17 +97,24 @@ async function start(tabId, streamId, gain, useLimiter) {
     t.addEventListener("ended", () => {
       if (graphs.get(tabId) !== graph) return; // a successor start/graph owns this tab now
       stop(tabId);
-      chrome.runtime.sendMessage({ type: "trackEnded", tabId });
+      // Best effort: if this is lost (worker mid-restart), the active list keeps a stale entry.
+      // That is why 'update' acks - the stale entry heals on the next slider move either way.
+      chrome.runtime.sendMessage({ type: "trackEnded", tabId }).catch(() => {});
     })
   );
 }
 
+// Returns whether a graph (or an in-flight start) actually took the update: the worker's active
+// list can hold a STALE tab when a trackEnded message was lost, and an update swallowed silently
+// would leave that tab's slider dead for the tab's whole life (a reload does not clear the list,
+// only closing the tab does). The worker uses the ack to heal the entry and start fresh.
 function update(tabId, gain, useLimiter) {
   const g = graphs.get(tabId);
-  if (!g) return;
-  if (g.pending) { g.latest = { gain, useLimiter }; return; } // retarget the in-flight start
-  g.gain.gain.setTargetAtTime(gain, g.ctx.currentTime, 0.02); // smooth, no click
-  applyLimiter(g, useLimiter, false);                         // ramped toggle, no click
+  if (!g) return false;
+  if (g.pending) { g.latest = { gain, useLimiter }; return true; } // retarget the in-flight start
+  g.gain.gain.setTargetAtTime(gain, g.ctx.currentTime, 0.02);     // smooth, no click
+  applyLimiter(g, useLimiter, false);                             // ramped toggle, no click
+  return true;
 }
 
 function stop(tabId) {
@@ -127,11 +134,11 @@ function stop(tabId) {
   }, 120);
 }
 
-chrome.runtime.onMessage.addListener((msg) => {
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.target !== "offscreen") return;
   switch (msg.cmd) {
     case "start":  start(msg.tabId, msg.streamId, msg.gain, msg.useLimiter); break;
-    case "update": update(msg.tabId, msg.gain, msg.useLimiter); break;
+    case "update": sendResponse({ ok: update(msg.tabId, msg.gain, msg.useLimiter) }); break;
     case "stop":   stop(msg.tabId); break;
   }
 });

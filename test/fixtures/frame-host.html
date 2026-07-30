@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>iframe player fixture</title>
+<style>
+  body { background: #0b1219; margin: 0; padding: 8px; }
+  iframe { width: 620px; height: 500px; border: 0; display: block; }
+</style>
+</head>
+<body>
+<!-- The player lives in a CROSS-ORIGIN iframe, the way an embedded player usually does. That
+     frame runs its own content script and reports its own candidate, and the top frame here has
+     no media at all - so the worker's element mode has to point at the inner frame. Only the
+     frame the worker actually engaged is allowed to hook anything on its own; the runner serves
+     this page with the inner origin substituted. -->
+<iframe id="inner" src="__INNER__"></iframe>
+</body>
+</html>

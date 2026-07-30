@@ -64,15 +64,15 @@
     "description": "Status pill when the user chose fullscreen over boosting. Keep short; keep the “ · ” separator."
   },
   "modePausedTitleConflict": {
-    "message": "Another app is using this tab's audio. Boost is paused so native fullscreen keeps working.",
-    "description": "Tooltip of the paused pill when another app controls the tab's audio."
+    "message": "This page already handles its own audio (or another app does). Boost is paused so native fullscreen keeps working.",
+    "description": "Tooltip of the paused pill when the element is already hooked by someone else. Usually the page itself (sites that route their own player through Web Audio), not a separate program - hence the wording."
   },
   "modePausedTitlePref": {
     "message": "“Prefer fullscreen” is on for this tab, so the volume level isn't applied via capture.",
     "description": "Tooltip of the paused pill when the user's own toggle causes the pause. Quotes the fsLabel name."
   },
   "pausedMsgConflict": {
-    "message": "Another app is already using this tab's audio. Boost is paused so fullscreen keeps working - turn off “Prefer fullscreen” to boost via capture instead (fullscreen off).",
+    "message": "This page already handles its own audio (or another app does), so boosting would need tab capture. Boost is paused so fullscreen keeps working - turn off “Prefer fullscreen” to boost anyway (fullscreen off).",
     "description": "Explanation box in the paused+conflict state. Quotes the fsLabel name."
   },
   "pausedMsgPref": {
@@ -92,12 +92,12 @@
     "description": "Tooltip of the capture pill (normal case)."
   },
   "modeCaptureTitleConflict": {
-    "message": "Another app is using this tab's audio, so it's boosting via capture. Fullscreen is disabled while boosted.",
-    "description": "Tooltip of the capture pill on a conflict."
+    "message": "Boost is on, but not in fullscreen: this page already handles its own audio (or another app does), so tab capture is used.",
+    "description": "Tooltip of the capture pill on a conflict. Leads with the boost being ON: users read a message that opens with the loss as \"this does not work here\" and stop."
   },
   "captureMsgConflict": {
-    "message": "Another app is already using this tab's audio, so it's boosting via capture - fullscreen is unavailable. Turn on “Prefer fullscreen” to keep fullscreen instead (no boost).",
-    "description": "Explanation box in the capture+conflict state. Quotes the fsLabel name."
+    "message": "Boost is on, but fullscreen isn't: this page already handles its own audio (or another app does), so tab capture is used. Turn on “Prefer fullscreen” to keep fullscreen instead (no boost).",
+    "description": "Explanation box in the capture+conflict state. Quotes the fsLabel name. Leads with the boost being ON, see modeCaptureTitleConflict."
   },
   "modeNone": {
     "message": "Not boosting",
