@@ -299,11 +299,36 @@
   // gesture is all a legitimate click-to-unmute needs (the ping, plus one for the churn the
   // site's own handler causes). Key auto-repeat is ignored: holding a key would otherwise hold
   // the window open indefinitely.
+  // When the extension is UPDATED or reloaded, this isolated world is orphaned: no message can
+  // ever reach it again (stop included), but its WebAudio graphs keep applying the last level,
+  // and the NEW world cannot re-hook the same elements (one-shot). Untreated that is a stale,
+  // uncontrollable boost - and once the new world falls back to capture, capture gain STACKS on
+  // top of it. Orphaning is detectable: chrome.runtime.id reads undefined (or throws) in an
+  // invalidated context. Checked at the entry of every event handler that could act; on the
+  // first event after the update this world unwinds everything to unity and stands down.
+  let dead = false;
+  function checkOrphaned() {
+    if (dead) return true;
+    try { if (chrome.runtime && chrome.runtime.id) return false; } catch (_) {}
+    dead = true;
+    try { for (const g of retired) unwind(g); } catch (_) {}
+    try { if (S.engaged && S.ctx) unwind(S); } catch (_) {}
+    armedGain = null;
+    try { swapMo.disconnect(); } catch (_) {}
+    try { if (S.mo) S.mo.disconnect(); } catch (_) {}
+    try {
+      window.removeEventListener("pointerdown", noteGesture, true);
+      window.removeEventListener("keydown", noteGesture, true);
+    } catch (_) {}
+    return true;
+  }
+
   let lastGestureAt = -100000;
   let gestureUrgentLeft = 0;
   let gestureArmed = false; // engage() found a suspended AudioContext; retry on the next gesture
   const GESTURE_WINDOW = 1000;
   const noteGesture = (e) => {
+    if (checkOrphaned()) return;
     if (!e.isTrusted || (e.type === "keydown" && e.repeat)) return;
     lastGestureAt = performance.now();
     gestureUrgentLeft = 2;
@@ -390,7 +415,10 @@
     }
     return false;
   }
-  const swapMo = new MutationObserver((muts) => { if (touchesMedia(muts)) pingNavigated(); });
+  const swapMo = new MutationObserver((muts) => {
+    if (checkOrphaned()) return;
+    if (touchesMedia(muts)) pingNavigated();
+  });
   swapMo.observe(document.documentElement, {
     childList: true, subtree: true, attributes: true, attributeFilter: ["src"]
   });
@@ -400,6 +428,7 @@
   // element just became actionable (audibly playing); wiggles on muted/paused elements take the
   // churn path. Our own hooked element is skipped: its gain node already applies.
   document.addEventListener("volumechange", (e) => {
+    if (checkOrphaned()) return;
     const el = e.target;
     if (!el || el.tagName !== "VIDEO" && el.tagName !== "AUDIO") return;
     if (el === S.el) return;
@@ -409,10 +438,37 @@
     if (audible && autoHook(el)) return;
     pingNavigated(audible);
   }, true);
+  // play() on an ALREADY-UNMUTED element is the volumechange listener's blind twin: pressing
+  // play on a second article video (unmuted from the start, just paused) changes neither volume
+  // nor the DOM, so without this listener no signal exists at all and the boost simply never
+  // arrives. Same treatment: take it in-page when possible, ping otherwise.
+  document.addEventListener("play", (e) => {
+    if (checkOrphaned()) return;
+    const el = e.target;
+    if (!el || el.tagName !== "VIDEO" && el.tagName !== "AUDIO") return;
+    if (el === S.el) return;
+    const audible = !el.muted && el.volume > 0;
+    if (audible && autoHook(el)) return;
+    pingNavigated(audible);
+  }, true);
+  // Orphan standdown must not depend on the USER doing something: after an extension update,
+  // the dangerous stacking path (new popup re-boost -> new world refused -> capture ON TOP of
+  // this world's stale element gain) involves zero in-page events. timeupdate fires several
+  // times a second on any playing media, so a boosted world notices its own death within a
+  // fraction of a second; the handler is a single boolean check per event while healthy.
+  document.addEventListener("timeupdate", () => { checkOrphaned(); }, true);
   // SPA route changes that fire DOM-visible events. (history.pushState is invisible
   // from this isolated world - the worker catches those via tabs.onUpdated url changes.)
   window.addEventListener("popstate", pingNavigated);
   window.addEventListener("hashchange", pingNavigated);
+  // Back/forward cache: this document may return from the freezer with its graphs and arming
+  // intact - including a boost the user RELEASED while the page slept, which no stop could
+  // reach. Ask the worker for the truth; it answers with a stop when nothing should be active,
+  // or re-asserts the stored level when it should.
+  window.addEventListener("pageshow", (e) => {
+    if (!e.persisted || checkOrphaned()) return;
+    try { chrome.runtime.sendMessage({ type: "resync" }); } catch (_) {}
+  });
 
   // --- pre-hook -----------------------------------------------------------
   // Normally the boost lands like this: the site unmutes → we notice → the worker is woken →
@@ -554,10 +610,14 @@
     if (armedGain == null || cmdBusy) return false;
     if (!hotCtx || hotCtx.state !== "running") return false;
     // The same rule the worker's engage switch follows: never take the hook off an element that
-    // is still playing. An ad starting over a running video would otherwise steal it, and unlike
-    // a click there is no user intent here to justify that.
+    // is still playing AUDIBLY. An ad starting over a running video would otherwise steal it,
+    // and unlike a click there is no user intent here to justify that. A muted or zero-volume
+    // holder is different: stealing from it is inaudible by definition, and refusing would hold
+    // the hook hostage on a silent hero loop while the real media plays at native level - the
+    // loop never pauses, so that state would be sticky for the page's whole life.
     const cur = S.el;
-    if (S.engaged && cur && cur.isConnected && !cur.paused && !cur.ended) return false;
+    if (S.engaged && cur && cur.isConnected && !cur.paused && !cur.ended && !cur.muted && cur.volume > 0)
+      return false;
     if (!hookableNow(el)) return false;
     const now = performance.now();
     if (now > autoHookReset) { autoHookBudget = 12; autoHookReset = now + AUTO_HOOK_WINDOW; }
@@ -567,8 +627,12 @@
     // nothing - otherwise a page whose own player fades el.volume (its element is foreign-hooked,
     // so every attempt throws) would drain the whole allowance for free and push every genuine
     // unmute back onto the slow path. Refusals above cost nothing for the same reason.
+    // Re-adopting a PARKED graph mints nothing (the one-shot was spent long ago), so it is
+    // free, like every other non-minting outcome: a feed muting/unmuting between two already-
+    // hooked clips must not drain the allowance a genuinely new element will need.
+    const parked = retired.some((g) => g.el === el);
     if (!adopt(el)) return false;
-    autoHookBudget--;
+    if (!parked) autoHookBudget--;
     return true;
   }
 
@@ -587,7 +651,13 @@
     if (S.engaged && S.ctx) {
       const cur = S.el;
       const next = pickElement();
-      const curIdle = !cur || !cur.isConnected || cur.paused || cur.ended;
+      // A muted/zero-volume current hook counts as idle: it contributes nothing audible, so
+      // handing off is silent - and NOT handing off is the hostage state, because a muted hero
+      // loop never pauses and would block the audible media forever (the popup showing green
+      // element mode at a level nobody hears). The parked graph keeps the tab level, so if the
+      // loop is ever unmuted it resumes correctly.
+      const curSilent = !!cur && (cur.muted || cur.volume === 0);
+      const curIdle = !cur || !cur.isConnected || cur.paused || cur.ended || curSilent;
       const nextPlaying = !!next && next !== cur && !next.paused && !next.ended && next.readyState >= 2;
       // AUDIBLE is required: muted autoplaying elements (hero loops, hover previews) must never
       // steal the hook from a merely-paused main video - that would be sticky, since the loop
@@ -597,7 +667,22 @@
       // otherwise open the gate, retire the content's live hook, and then be REFUSED by the
       // fresh path's assess - content unboosted, worker falling back to capture (fullscreen
       // lost) for the ad's lifetime. Unhookable interlopers just play at native volume.
-      const nextHookable = nextAudible && assess(next).safe;
+      // The redirect verdict is part of hookability HERE, not only after the retire: a
+      // same-origin src that 302s cross-origin passes assess, and discovering the refusal
+      // only after retireCurrent() would sacrifice the live hook for an element that can never
+      // be hooked - terminal capture for the tab. So for same-origin candidates the verdict is
+      // AWAITED before anything is torn down; the current hook stays untouched while the probe
+      // runs, and a negative simply keeps the fast path (the interloper plays at native volume,
+      // the documented tradeoff).
+      let nextHookable = false;
+      if (nextAudible) {
+        const na = assess(next);
+        if (na.safe) {
+          nextHookable = na.reason !== "same-origin"
+            ? true
+            : await sameOriginChainOk(next.currentSrc || next.src || "");
+        }
+      }
       if (!(curIdle && nextHookable)) {
         // A fresh episode's video often autoplays MUTED and unmutes a beat later. The document-
         // level volumechange capture listener (below the swapMo setup) re-pings the moment any

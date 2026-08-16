@@ -189,6 +189,37 @@ async function init() {
   useLimiter = pref[LIMITER_KEY] !== false;
   els.limiter.setAttribute("aria-checked", String(useLimiter));
 
+  // The slider is live BEFORE the prepare round-trip resolves: prepare can take a beat (probe
+  // across frames, worker cold start), and a user who opened the popup to drag immediately
+  // would otherwise have their drag silently discarded and the thumb snapped back. tab.id and
+  // the limiter pref are known here - that is all pushGain needs.
+  let userTouched = false;
+  els.slider.addEventListener("input", () => {
+    userTouched = true;
+    const g = gainFromPos(parseFloat(els.slider.value));
+    render(g);
+    pushGain(g);
+  });
+  // The keydown handler must be live in the same window: without it a focused slider handles
+  // arrow keys NATIVELY (step 1 of 1000), and gainFromPos of 499..504 rounds to exactly 1.0 -
+  // which pushGain treats as a RELEASE, wiping the stored level on a keystroke that was meant
+  // to nudge it. Keyboard support: the native step is 1/1000th of the track, so arrow presses
+  // would mostly be dead (gain rounds to 0.01/0.1). Step the GAIN directly instead: 0.01 below
+  // unity, 0.1 above.
+  els.slider.addEventListener("keydown", (e) => {
+    const dir = (e.key === "ArrowRight" || e.key === "ArrowUp") ? 1
+              : (e.key === "ArrowLeft" || e.key === "ArrowDown") ? -1 : 0;
+    if (!dir) return;
+    e.preventDefault();
+    userTouched = true;
+    const cur = gainFromPos(parseFloat(els.slider.value));
+    const step = (dir < 0 ? cur <= UNITY : cur < UNITY) ? 0.01 : 0.1;
+    const g = Math.min(MAX, Math.max(MIN, Math.round((cur + dir * step) * 100) / 100));
+    els.slider.value = posFromGain(g);
+    render(g);
+    pushGain(g);
+  });
+
   // Non-destructive predict + restore (worker probes the page and returns mode + saved level).
   const prep = await new Promise((resolve) =>
     chrome.runtime.sendMessage({ type: "prepare", tabId: tab.id }, (r) => resolve(r || { mode: "none", gain: 1 })) // no worker answer → claim nothing, not "capture"
@@ -196,20 +227,19 @@ async function init() {
 
   fsPriority = !!prep.fsPriority;
   let gain = typeof prep.gain === "number" ? Math.min(MAX, Math.max(MIN, prep.gain)) : UNITY;
-  els.slider.value = posFromGain(gain);
-  render(gain);
+  // A drag that happened while prepare was in flight is the newest user intent - never snap the
+  // thumb back to the stored level over it.
+  if (!userTouched) {
+    els.slider.value = posFromGain(gain);
+    render(gain);
+  }
   showMode(prep.mode, prep.conflict, fsPriority);
 
   // Re-apply on open (restores the level after a reload; harmless nudge if already running).
   // Skip while a background reload-restore is in flight - it will apply the level, and a
   // competing call here could commit a premature "capture" before the player has loaded.
-  if (!isUnity(gain) && !prep.restoring) pushGain(gain);
-
-  els.slider.addEventListener("input", () => {
-    const g = gainFromPos(parseFloat(els.slider.value));
-    render(g);
-    pushGain(g);
-  });
+  // Skip too when the user already dragged: their push is newer than the stored level.
+  if (!isUnity(gain) && !prep.restoring && !userTouched) pushGain(gain);
 
   els.limiter.addEventListener("click", () => {
     useLimiter = !useLimiter;
@@ -217,21 +247,6 @@ async function init() {
     chrome.storage.local.set({ [LIMITER_KEY]: useLimiter });
     const g = gainFromPos(parseFloat(els.slider.value));
     if (!isUnity(g)) pushGain(g); // at 1× nothing is engaged - pushing would just demote the pill
-  });
-
-  // Keyboard support: the native step is 1/1000th of the track, so arrow presses would mostly be
-  // dead (gain rounds to 0.01/0.1). Step the GAIN directly instead: 0.01 below unity, 0.1 above.
-  els.slider.addEventListener("keydown", (e) => {
-    const dir = (e.key === "ArrowRight" || e.key === "ArrowUp") ? 1
-              : (e.key === "ArrowLeft" || e.key === "ArrowDown") ? -1 : 0;
-    if (!dir) return;
-    e.preventDefault();
-    const cur = gainFromPos(parseFloat(els.slider.value));
-    const step = (dir < 0 ? cur <= UNITY : cur < UNITY) ? 0.01 : 0.1;
-    const g = Math.min(MAX, Math.max(MIN, Math.round((cur + dir * step) * 100) / 100));
-    els.slider.value = posFromGain(g);
-    render(g);
-    pushGain(g);
   });
 
   els.fsToggle.addEventListener("click", () => {

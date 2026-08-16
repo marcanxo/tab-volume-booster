@@ -48,6 +48,7 @@
         if (v.paused) v.play();
       });
       post.appendChild(v);
+      if (o.paused) v.autoplay = false; // makePost normally autoplays at the bottom; see there
       // Real feeds rarely put the click handler on the <video>: a transparent catcher sits on
       // top of it, so the click target is a plain <div> and the video is only reachable by
       // hit-testing the point. That is the case the pre-hook's element lookup has to survive.
@@ -63,7 +64,7 @@
         post.style.position = "relative";
       }
       document.getElementById("feed").appendChild(post);
-      v.play().catch(() => {});
+      if (!o.paused) v.play().catch(() => {});
       return v;
     }
 
@@ -72,6 +73,9 @@
       add() { return makePost({}).id; },
       // add an audibly-playing post
       addAudible() { return makePost({ muted: false }).id; },
+      // unmuted from the start but PAUSED - the article-page second video. Pressing play on it
+      // later changes neither volume nor the DOM: the play event is the only signal there is.
+      addPaused() { return makePost({ muted: false, paused: true }).id; },
       // muted autoplaying post whose click handler sits on a transparent cover, not the video
       addOverlay() { return makePost({ overlay: true }).id; },
       // The reels pattern: a brand new element starts MUTED and the site unmutes it a moment

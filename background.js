@@ -160,8 +160,18 @@ async function captureSetGain(tabId, gain, useLimiter) {
     await unmarkActive(tabId);
   }
   const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tabId });
-  toOffscreen({ cmd: "start", tabId, streamId, gain, useLimiter });
+  // Marked BEFORE the start settles so a concurrent setGain routes into the acked-update path
+  // (which retargets the in-flight start) instead of racing a second start. The start itself is
+  // AWAITED: getUserMedia can fail asynchronously, and reporting 'capture' before the graph is
+  // actually live would leave the popup showing an amber pill over a boost that never happened.
   await markActive(tabId);
+  const started = await chrome.runtime
+    .sendMessage({ target: "offscreen", cmd: "start", tabId, streamId, gain, useLimiter })
+    .catch(() => null);
+  if (!started || !started.ok) {
+    await unmarkActive(tabId);
+    throw new Error("capture start failed");
+  }
 }
 async function captureStop(tabId) { toOffscreen({ cmd: "stop", tabId }); await unmarkActive(tabId); }
 
@@ -296,6 +306,25 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // deferIfBusy=true so a swap during an in-flight restore re-runs afterwards instead of dropping.
     const tabId = sender.tab && sender.tab.id;
     if (tabId != null) kickRestore(tabId, true);
+    return;
+  }
+
+  if (msg.type === "resync") {
+    // A frame came back from the back/forward cache with its old graphs and arming intact. If
+    // the tab has no active level any more (the user released while the page slept - that stop
+    // could not reach a frozen document), shut the resurrected boost down; otherwise re-assert
+    // the stored level through the ordinary restore machinery.
+    const tabId = sender.tab && sender.tab.id;
+    if (tabId == null) return;
+    serialized(tabId, async () => {
+      const g = await sget(TABGAIN(tabId));
+      if (!isActiveGain(g)) {
+        await toFrame(tabId, null, { cmd: "stop" });
+        await clearMode(tabId);
+      } else {
+        kickRestore(tabId, true);
+      }
+    });
     return;
   }
 

@@ -42,16 +42,22 @@ function applyLimiter(graph, on, immediate) {
   }
 }
 
+// Resolves true once the graph is actually LIVE (or an in-flight start it retargeted goes
+// live), false when the capture failed or was cancelled. The worker awaits this: reporting
+// 'capture' to the popup before getUserMedia settles would show an amber pill over a boost
+// that may never happen.
 async function start(tabId, streamId, gain, useLimiter) {
   const existing = graphs.get(tabId);
   if (existing) {
-    if (existing.pending) { existing.latest = { gain, useLimiter }; existing.cancelled = false; }
-    else update(tabId, gain, useLimiter);
-    return;
+    if (existing.pending) { existing.latest = { gain, useLimiter }; existing.cancelled = false; return existing.done; }
+    update(tabId, gain, useLimiter);
+    return true;
   }
 
   // Register the placeholder BEFORE the async capture so concurrent messages see it.
   const entry = { pending: true, latest: { gain, useLimiter }, cancelled: false };
+  let settle;
+  entry.done = new Promise((r) => { settle = r; });
   graphs.set(tabId, entry);
 
   let stream;
@@ -68,14 +74,16 @@ async function start(tabId, streamId, gain, useLimiter) {
       graphs.delete(tabId);
       try { chrome.runtime.sendMessage({ type: "captureFailed", tabId }).catch(() => {}); } catch (_) {}
     }
-    return;
+    settle(false);
+    return false;
   }
 
   if (entry.cancelled || graphs.get(tabId) !== entry) {
     // A 'stop' (or a replacement start) arrived while capture was starting → don't go live.
     try { stream.getTracks().forEach((t) => t.stop()); } catch (_) {}
     if (graphs.get(tabId) === entry) graphs.delete(tabId);
-    return;
+    settle(false);
+    return false;
   }
 
   const ctx = new AudioContext();
@@ -102,6 +110,8 @@ async function start(tabId, streamId, gain, useLimiter) {
       chrome.runtime.sendMessage({ type: "trackEnded", tabId }).catch(() => {});
     })
   );
+  settle(true);
+  return true;
 }
 
 // Returns whether a graph (or an in-flight start) actually took the update: the worker's active
@@ -111,7 +121,10 @@ async function start(tabId, streamId, gain, useLimiter) {
 function update(tabId, gain, useLimiter) {
   const g = graphs.get(tabId);
   if (!g) return false;
-  if (g.pending) { g.latest = { gain, useLimiter }; return true; } // retarget the in-flight start
+  // Retargeting an in-flight start: the answer is not known yet - a synchronous ok here would
+  // let the worker record mode 'capture' while getUserMedia can still reject, the exact lie the
+  // acked start exists to prevent. Hand back the start's own completion instead.
+  if (g.pending) { g.latest = { gain, useLimiter }; return g.done; }
   g.gain.gain.setTargetAtTime(gain, g.ctx.currentTime, 0.02);     // smooth, no click
   applyLimiter(g, useLimiter, false);                             // ramped toggle, no click
   return true;
@@ -136,9 +149,21 @@ function stop(tabId) {
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.target !== "offscreen") return;
-  switch (msg.cmd) {
-    case "start":  start(msg.tabId, msg.streamId, msg.gain, msg.useLimiter); break;
-    case "update": sendResponse({ ok: update(msg.tabId, msg.gain, msg.useLimiter) }); break;
-    case "stop":   stop(msg.tabId); break;
+  if (msg.cmd === "start") {
+    // Async ack: resolves only once the capture is genuinely live (or has failed).
+    start(msg.tabId, msg.streamId, msg.gain, msg.useLimiter)
+      .then((ok) => { try { sendResponse({ ok: !!ok }); } catch (_) {} });
+    return true;
   }
+  if (msg.cmd === "update") {
+    const r = update(msg.tabId, msg.gain, msg.useLimiter);
+    if (r && typeof r.then === "function") {
+      // pending start retargeted: ack with ITS outcome, once known
+      r.then((ok) => { try { sendResponse({ ok: !!ok }); } catch (_) {} });
+      return true;
+    }
+    sendResponse({ ok: r });
+    return;
+  }
+  if (msg.cmd === "stop") stop(msg.tabId);
 });

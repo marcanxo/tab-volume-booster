@@ -356,16 +356,18 @@ const scenarios = {
       const tabId = await tabIdOf(ctx.sw, ctx.port);
       const r1 = await swSetGain(ctx.sw, tabId, 3);
       if (r1.mode !== "element" || !r1.confirmed) return `setup failed: ${JSON.stringify(r1)}`;
-      await swClearLog(ctx.sw);
       const ad = await page.evaluate((m) => window.feed.adStart(m, {}), main);
-      const sw1 = await waitEngage(ctx.sw, (r) => r.ok && r.signal === true, 4000);
-      if (!sw1.hit) return `hook never switched to the ad within 4s`;
-      ctx.note(`switched to ad after ${sw1.elapsed}ms`);
-      await swClearLog(ctx.sw);
+      // Since the play listener, the switch may happen IN-PAGE (zero worker traffic) or via the
+      // worker - either way the ground truth is the same: the LIVE graph must carry audible
+      // signal, which only the ad produces now (the content is paused). A hook stuck on the
+      // paused content would measure silence.
+      await sleep(1500);
+      const m1 = await ctx.sw.evaluate((t) => chrome.tabs.sendMessage(t, { cmd: "measure" }), tabId);
+      if (!m1 || !m1.ok || !m1.signal) return `hook never moved to the ad (live graph silent: ${JSON.stringify(m1)})`;
       await page.evaluate((a, m) => window.feed.adEnd(a, m), ad, main);
-      const back = await waitEngage(ctx.sw, (r) => r.ok && r.signal === true, 5000);
-      if (!back.hit) return `boost never returned to the content video after the ad`;
-      ctx.note(`recovered ${back.elapsed}ms after ad end`);
+      await sleep(2000);
+      const m2 = await ctx.sw.evaluate((t) => chrome.tabs.sendMessage(t, { cmd: "measure" }), tabId);
+      if (!m2 || !m2.ok || !m2.signal) return `boost never returned to the content video after the ad (live graph silent: ${JSON.stringify(m2)})`;
       return true;
     } finally { await page.close(); }
   },
@@ -769,9 +771,12 @@ const scenarios = {
         const v = document.getElementById(keep);
         v.muted = false; v.volume = 1; v.play().catch(() => {});
       }, ids[1], [ids[2], ids[3], last]);
-      await sleep(400);
-      const back = await ctx.sw.evaluate((t) => chrome.tabs.sendMessage(t, { cmd: "engage", gain: 3, useLimiter: true }), tabId);
-      if (!back || !back.ok || back.signal !== true)
+      await sleep(500);
+      // Since the play/volumechange listeners, the returning element is re-adopted IN-PAGE, so
+      // an engage would fast-path without measuring. The read-only measure is the ground truth:
+      // if reclaiming the detached graphs closed the shared ctx, the live graph is silent.
+      const back = await ctx.sw.evaluate((t) => chrome.tabs.sendMessage(t, { cmd: "measure" }), tabId);
+      if (!back || !back.ok || !back.signal)
         return `BUG: a parked graph lost its audio when a detached one was reclaimed: ${JSON.stringify(back)}`;
       // The reclaimed element returns. Its hook is spent - refuse, but honestly.
       await page.evaluate((x, y) => { window.feed.pause(y); window.feed.reattach(x); }, first, ids[1]);
@@ -1184,6 +1189,233 @@ const scenarios = {
         return `BUG: mode says capture but the engine has no graph - the slider is dead and the popup lies`;
       if (stillListed && !(ack && ack.ok))
         return `BUG: the stale active entry survived the slider move - every future update goes into the void`;
+      return true;
+    } finally { await page.close(); }
+  },
+
+  // The muted-holder hostage, in-page half. A silent hero loop got the hook (it was the only
+  // element when the level was set); the real clip then unmutes ITSELF. The old no-steal gate
+  // refused because the loop "is playing" - but a muted holder contributes nothing audible, so
+  // the steal is silent by definition and refusing means the audible media never gets the level.
+  async s31_muted_holder_autohook_steal(ctx) {
+    const page = await newFeedPage(ctx.browser, ctx.port);
+    try {
+      const loop = await page.evaluate(() => window.feed.add()); // muted autoplay loop
+      await sleep(400);
+      const tabId = await tabIdOf(ctx.sw, ctx.port);
+      const r1 = await swSetGain(ctx.sw, tabId, 0.05); // hooks the muted loop (only element)
+      if (r1.mode !== "element") return `setup failed: ${JSON.stringify(r1)}`;
+      const clip = await page.evaluate(() => window.feed.add());
+      await sleep(2600); // churn drains; the loop keeps "playing" muted the whole time
+      await swClearSpy(ctx.sw);
+      await page.evaluate((i) => window.feed.unmute(i), clip); // gesture-less self-unmute
+      return await assertHookedInPage(ctx, page, clip, "clip unmuting next to a muted holder");
+    } finally { await page.close(); }
+  },
+
+  // Same hostage, worker half: the audible successor arrives via DOM churn and the WORKER'S
+  // engage switch gate must hand off from the muted holder (old curIdle never included muted).
+  async s32_muted_holder_engage_switch(ctx) {
+    const page = await newFeedPage(ctx.browser, ctx.port);
+    try {
+      const loop = await page.evaluate(() => window.feed.add());
+      await sleep(400);
+      const tabId = await tabIdOf(ctx.sw, ctx.port);
+      const r1 = await swSetGain(ctx.sw, tabId, 3);
+      if (r1.mode !== "element") return `setup failed: ${JSON.stringify(r1)}`;
+      await swClearSpy(ctx.sw);
+      // An audibly-playing clip appears with a same-origin src whose redirect verdict is COLD:
+      // the in-page paths must refuse it (sync gate), so the signal falls through to the worker
+      // and the ENGAGE switch gate is what hands off - the gate under test. A blob clip would be
+      // adopted in-page by the play listener and never reach the worker.
+      await page.evaluate(() => window.feed.addSrc("/media.wav"));
+      const { hit, elapsed } = await waitEngage(ctx.sw, (r) => r.ok && r.signal === true, 5000);
+      if (!hit) return `BUG: the muted loop held the hook - the audible clip never got the level`;
+      ctx.note(`handoff after ${elapsed}ms`);
+      return true;
+    } finally { await page.close(); }
+  },
+
+  // Orphaned world after an extension update/reload. chrome.runtime.id reads undefined in an
+  // invalidated context; the first event afterwards must unwind every graph to unity and stand
+  // down - otherwise the old world keeps applying a level nobody can ever change again, and
+  // capture gain from the NEW world would stack on top. Simulated by overriding chrome.runtime
+  // in the extension's isolated world (executeScript reaches the same world as the content
+  // script); the pre-override runtime references keep the measure channel alive for asserting.
+  async s33_orphaned_world_stands_down(ctx) {
+    const page = await newFeedPage(ctx.browser, ctx.port);
+    try {
+      const a = await page.evaluate(() => window.feed.addAudible());
+      await sleep(300);
+      const tabId = await tabIdOf(ctx.sw, ctx.port);
+      const r1 = await swSetGain(ctx.sw, tabId, 0.05); // ducked: unity vs 0.05 is unmistakable in rms
+      if (r1.mode !== "element" || !r1.confirmed) return `setup failed: ${JSON.stringify(r1)}`;
+      const m1 = await ctx.sw.evaluate((t) => chrome.tabs.sendMessage(t, { cmd: "measure" }), tabId);
+      if (!m1 || !m1.ok || m1.rms > 0.1) return `precondition failed: ducked rms ${m1 && m1.rms}`;
+      // simulate invalidation: chrome.runtime disappears from the isolated world
+      await ctx.sw.evaluate((t) => chrome.scripting.executeScript({
+        target: { tabId: t },
+        func: () => { Object.defineProperty(chrome, "runtime", { get: () => undefined, configurable: true }); },
+      }), tabId);
+      // Deliberately NO user event: the dangerous stacking window (popup re-boost over a stale
+      // orphan graph) involves none, so the standdown must come from the continuous trigger -
+      // timeupdate on the playing video - all by itself.
+      await sleep(900);
+      const m2 = await ctx.sw.evaluate((t) => chrome.tabs.sendMessage(t, { cmd: "measure" }), tabId);
+      ctx.note(`rms ducked ${m1.rms.toFixed(3)} -> after orphan ${m2 && m2.ok && m2.rms.toFixed(3)}`);
+      if (!m2 || !m2.ok) return `measure channel died: ${JSON.stringify(m2)}`;
+      if (m2.rms < 0.2) return `BUG: the orphaned world keeps applying the stale 0.05x level (rms ${m2.rms.toFixed(3)})`;
+      // and it must be DISARMED: a fresh self-unmuting element must not be hooked by the corpse
+      const b = await page.evaluate(() => window.feed.addReel());
+      await sleep(600);
+      if (await page.evaluate((i) => window.feed.isHooked(i), b))
+        return `BUG: the orphaned world still mints hooks`;
+      return true;
+    } finally { await page.close(); }
+  },
+
+  // The capture-start ack: a start whose getUserMedia fails must answer ok:false, so the worker
+  // reports an honest failure instead of recording mode 'capture' for a boost that never went
+  // live (amber pill lying over silence).
+  async s34_capture_start_acked(ctx) {
+    const ack = await ctx.sw.evaluate(async () => {
+      await ensureOffscreen();
+      return chrome.runtime
+        .sendMessage({ target: "offscreen", cmd: "start", tabId: 999999, streamId: "bogus-stream-id", gain: 3, useLimiter: true })
+        .catch((e) => ({ err: String(e) }));
+    });
+    ctx.note(JSON.stringify(ack));
+    if (!ack || ack.ok !== false) return `start with a dead streamId did not ack ok:false: ${JSON.stringify(ack)}`;
+    return true;
+  },
+
+  // The play-event blind spot: a second video that is unmuted from the start and merely PAUSED.
+  // Pressing play changes neither volume nor the DOM - before the play listener existed there
+  // was no signal at all and the boost never arrived.
+  async s35_play_on_unmuted_paused(ctx) {
+    const page = await newFeedPage(ctx.browser, ctx.port);
+    try {
+      const a = await page.evaluate(() => window.feed.addAudible());
+      await sleep(300);
+      const tabId = await tabIdOf(ctx.sw, ctx.port);
+      const r1 = await swSetGain(ctx.sw, tabId, 0.05);
+      if (r1.mode !== "element" || !r1.confirmed) return `setup failed: ${JSON.stringify(r1)}`;
+      await page.evaluate((i) => window.feed.pause(i), a);
+      const b = await page.evaluate(() => window.feed.addPaused()); // unmuted, paused, never played
+      await sleep(2600);
+      await swClearSpy(ctx.sw);
+      await page.evaluate((i) => window.feed.play(i), b); // no gesture, no volumechange, no churn
+      return await assertHookedInPage(ctx, page, b, "play on an unmuted paused video");
+    } finally { await page.close(); }
+  },
+
+  // Back/forward cache: a page frozen with a live graph returns after the user RELEASED the
+  // boost - the release's stop could never reach it. The pageshow resync must shut the
+  // resurrected boost down. (BFCache participation depends on the browser build; the scenario
+  // verifies honestly and reports when the cache was not used.)
+  async s36_bfcache_release_resync(ctx) {
+    const page = await newFeedPage(ctx.browser, ctx.port);
+    try {
+      const a = await page.evaluate(() => window.feed.addAudible());
+      await sleep(300);
+      const tabId = await tabIdOf(ctx.sw, ctx.port);
+      const r1 = await swSetGain(ctx.sw, tabId, 3);
+      if (r1.mode !== "element" || !r1.confirmed) return `setup failed: ${JSON.stringify(r1)}`;
+      await page.goto(`http://127.0.0.1:${ctx.port}/x-feed.html?other`, { waitUntil: "load" });
+      await swSetGain(ctx.sw, tabId, 1); // release while the boosted page sits in the freezer
+      await sleep(300);
+      await page.goBack({ waitUntil: "load" }).catch(() => {});
+      await sleep(800); // pageshow resync roundtrip + stop ramp
+      const persisted = await page.evaluate(() =>
+        performance.getEntriesByType("navigation").some((n) => n.deliveryType === "back-forward" || n.type === "back_forward"));
+      if (!persisted) { ctx.note("bfcache not used in this environment - resync path not exercised"); return true; }
+      await page.evaluate((i) => { const v = document.getElementById(i); if (v) { v.muted = false; v.volume = 1; v.play(); } }, a);
+      await sleep(400);
+      const m = await ctx.sw.evaluate((t) => chrome.tabs.sendMessage(t, { cmd: "measure" }), tabId);
+      ctx.note(`persisted, rms ${m && m.ok && m.rms && m.rms.toFixed(3)}`);
+      if (m && m.ok && m.rms > 0.45) return `BUG: the resurrected page still boosts at 3x after the release (rms ${m.rms.toFixed(3)})`;
+      return true;
+    } finally { await page.close(); }
+  },
+
+  // Protection direction of the relaxed gates: an audible interloper firing 'play' while the
+  // hooked content plays AUDIBLY must still be refused - the muted-holder relaxation must not
+  // have opened the ad-steal door the no-steal gate exists for.
+  async s37_play_no_steal_while_audible(ctx) {
+    const page = await newFeedPage(ctx.browser, ctx.port);
+    try {
+      const main = await page.evaluate(() => window.feed.addAudible());
+      await sleep(300);
+      const tabId = await tabIdOf(ctx.sw, ctx.port);
+      const r1 = await swSetGain(ctx.sw, tabId, 0.05);
+      if (r1.mode !== "element" || !r1.confirmed) return `setup failed: ${JSON.stringify(r1)}`;
+      await sleep(2600);
+      await swClearSpy(ctx.sw);
+      // audible ad appears (fires 'play') while the content is STILL PLAYING audibly
+      const ad = await page.evaluate(() => window.feed.addAudible());
+      await sleep(1500);
+      const hooked = await page.evaluate((i) => window.feed.isHooked(i), ad);
+      const mode = await swGetMode(ctx.sw, tabId);
+      if (hooked) return `BUG: the play path stole the hook from audibly-playing content`;
+      if (mode && mode.mode !== "element") return `mode drifted: ${JSON.stringify(mode)}`;
+      return true;
+    } finally { await page.close(); }
+  },
+
+  // The resync handler itself, without needing BFCache (which CDP-attached pages never enter):
+  // a frame holding a HOT graph while the worker has no active gain any more - exactly what a
+  // BFCache restore after a release produces - must be shut down by one resync message.
+  async s38_resync_releases_stale(ctx) {
+    const page = await newFeedPage(ctx.browser, ctx.port);
+    try {
+      const a = await page.evaluate(() => window.feed.addAudible());
+      await sleep(300);
+      const tabId = await tabIdOf(ctx.sw, ctx.port);
+      const r1 = await swSetGain(ctx.sw, tabId, 0.05);
+      if (r1.mode !== "element" || !r1.confirmed) return `setup failed: ${JSON.stringify(r1)}`;
+      // simulate the post-BFCache state: the stored level is GONE (released while frozen), the
+      // frame's graph is still hot - deleted directly, bypassing release's stop broadcast
+      await ctx.sw.evaluate(async (t) => { await sdel(`tabgain:${t}`); await sdel(`tabmode:${t}`); }, tabId);
+      const m1 = await ctx.sw.evaluate((t) => chrome.tabs.sendMessage(t, { cmd: "measure" }), tabId);
+      if (!m1 || !m1.ok || m1.rms > 0.1) return `precondition failed: graph not hot/ducked (${JSON.stringify(m1)})`;
+      // the frame reports back from the freezer
+      await ctx.sw.evaluate((t) => chrome.scripting.executeScript({
+        target: { tabId: t },
+        func: () => { try { chrome.runtime.sendMessage({ type: "resync" }); } catch (_) {} },
+      }), tabId);
+      await sleep(600); // handler roundtrip + stop ramp
+      const m2 = await ctx.sw.evaluate((t) => chrome.tabs.sendMessage(t, { cmd: "measure" }), tabId);
+      ctx.note(`rms ${m1.rms.toFixed(3)} -> ${m2 && m2.ok && m2.rms.toFixed(3)}`);
+      if (!m2 || !m2.ok) return `measure failed after resync: ${JSON.stringify(m2)}`;
+      if (m2.rms < 0.2) return `BUG: the stale graph still applies the released level after resync (rms ${m2.rms.toFixed(3)})`;
+      return true;
+    } finally { await page.close(); }
+  },
+
+  // The sacrifice guard on the switch gate: an audible interloper whose same-origin src 302s
+  // cross-origin must NOT cost a muted holder its live hook (assess alone would open the gate;
+  // the awaited redirect verdict must close it BEFORE anything is retired). Pre-fix this
+  // flipped the tab to capture for the interloper's lifetime.
+  async s39_redirect_interloper_no_sacrifice(ctx) {
+    const page = await newFeedPage(ctx.browser, ctx.port);
+    try {
+      const loop = await page.evaluate(() => window.feed.add()); // muted holder
+      await sleep(400);
+      const tabId = await tabIdOf(ctx.sw, ctx.port);
+      const r1 = await swSetGain(ctx.sw, tabId, 3);
+      if (r1.mode !== "element") return `setup failed: ${JSON.stringify(r1)}`;
+      await sleep(2600);
+      await swClearSpy(ctx.sw);
+      const bad = await page.evaluate(() => window.feed.addSrc("/redir.wav")); // audible, same-origin -> 302 cross-origin
+      await sleep(3500); // play ping + restore + awaited verdict all settle
+      const mode = await swGetMode(ctx.sw, tabId);
+      const hookedBad = await page.evaluate((i) => window.feed.isHooked(i), bad);
+      ctx.note(`mode=${mode && mode.mode}`);
+      if (hookedBad) return `BUG: the redirecting interloper was hooked (would be silenced)`;
+      // The positive claim, not just "no capture": the holder's ELEMENT mode must survive. In
+      // the harness a sacrificed hook shows up as mode undefined (capture start has no grant
+      // here), in the field as mode 'capture' - both are the sacrifice.
+      if (!mode || mode.mode !== "element") return `BUG: the muted holder's hook was sacrificed for an unhookable interloper (mode=${mode && mode.mode})`;
       return true;
     } finally { await page.close(); }
   },

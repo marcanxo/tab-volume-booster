@@ -3,6 +3,28 @@
 What changed in each release, in plain terms. Versions match the ones published on the
 [Chrome Web Store](https://chromewebstore.google.com/detail/lcbedgoeigfomodfdiepidklaoplonii).
 
+## 1.1.8 - 2026-08-16
+
+- **A muted video can no longer hold on to the boost.** Some pages keep a silent clip looping in
+  the background (a preview or decorative animation). If that clip grabbed the boost first, the
+  video you actually watched played at native volume while the popup claimed everything was fine.
+  The boost now moves on to whatever is audible.
+- **Pressing play on an already unmuted video now applies the boost.** A paused video that was
+  never muted gave no signal at all when started, so it simply played at native volume.
+- **After the extension updates itself, old copies in open tabs stand down.** Chrome updates
+  extensions in the background; a page loaded before the update kept a leftover boost running
+  that the new version could not control. In the worst case the two stacked and doubled the
+  volume. The leftover now detects the situation and returns the tab to native volume.
+- **The status shown in the popup is now confirmed, not assumed.** Fullscreen capture only
+  reports success once audio is actually flowing, so the popup can no longer show an active
+  boost over a tab that stayed silent.
+- **Navigating back to a page no longer revives a boost you turned off.** Chrome restores pages
+  from a cache when you press back; the restored page now checks with the extension instead of
+  resuming its old state.
+- **The popup no longer ignores input during its first moments.** Moving the slider or pressing
+  an arrow key right after opening was lost, and an early arrow key could even reset the stored
+  level to 1.0 for good.
+
 ## 1.1.7 - 2026-07-30
 
 - **Clicking a muted video now applies the boost instantly.** The level is set inside the click
