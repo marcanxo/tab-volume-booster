@@ -16,7 +16,9 @@ const REPO = path.dirname(__dirname);
 const CHROME = (() => {
   const root = path.join(__dirname, ".browsers", "chrome");
   if (fs.existsSync(root)) {
-    for (const d of fs.readdirSync(root)) {
+    // Newest build first: an older cached build must never win by directory order.
+    const dirs = fs.readdirSync(root).sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
+    for (const d of dirs) {
       const exe = path.join(root, d, "chrome-win64", "chrome.exe");
       if (fs.existsSync(exe)) return exe;
     }
