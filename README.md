@@ -16,11 +16,11 @@ It's a *hybrid*: per tab it automatically picks the boosting method that preserv
 - **Per-tab memory.** Each tab remembers its own level while it's open (including across YouTube's autoplay/next-video). Closing the tab forgets it. Nothing is shared between tabs.
 - **Survives reload.** After an F5 the level re-applies automatically - no need to reopen the popup (see [Notes](#notes--limits) for the exceptions).
 - **Handles player element swaps.** When a site replaces its `<video>` (e.g. ad → content) - or swaps the whole player `<iframe>` on a "next episode" transition without a page load - the boost re-attaches to the new element.
-- **Conflict handling.** If another app/extension already controls a tab's audio, you get a clear choice: boost via capture, or keep native fullscreen with no boost.
+- **Conflict handling.** If the page already routes its player through its own audio processing (or another app/extension does), you get a clear choice: boost via capture, or keep native fullscreen with no boost.
 - **Built-in limiter.** Tames distortion on hard boosts; toggle is click-free.
 - **One-click reset** back to 1× (off).
 - **Localized.** The popup ships in 14 languages, auto-selected from your browser's language. Adding another is a single JSON file - see [TRANSLATING.md](TRANSLATING.md).
-- **Private.** Nothing is uploaded: no analytics, no accounts, no third parties. The only thing stored is your per-tab level and the limiter preference, in Chrome's on-device extension storage. (The one request it ever makes is a same-origin redirect check against the site you're on - see [Privacy](#privacy).)
+- **Private.** Nothing is uploaded: no analytics, no accounts, no third parties. Stored on your device only: each tab's level, the method in use and your fullscreen preference (forgotten when the tab closes), plus the limiter preference. (The one request it ever makes is a same-origin redirect check against the site you're on - see [Privacy](#privacy).)
 
 ---
 
@@ -60,7 +60,7 @@ You can always install straight from source - no store needed (requires Chrome 1
 - **Slider:** centered at **1× (off)**. Right = louder (→ 6×), left = quieter (→ 0× silent). Readout heats blue → amber → red when boosting and turns cyan when reducing.
 - **Reset:** the `reset` button (top-right of the popup) snaps back to 1× / off.
 - **Limiter:** ON tames distortion on hard boosts; OFF = raw gain.
-- **Prefer fullscreen** (appears only on a conflict): when another app already controls the tab's audio, the pill reads *"Capture mode · conflict"*. Leave the toggle OFF to boost anyway via capture (fullscreen off), or turn it ON to keep native fullscreen and pause the boost (*"Fullscreen kept · boost paused"*). Remembered per tab.
+- **Prefer fullscreen** (appears only on a conflict): when the page (or another app) already processes the tab's audio itself, the pill reads *"Capture mode · conflict"*. Leave the toggle OFF to boost anyway via capture (fullscreen off), or turn it ON to keep native fullscreen and pause the boost (*"Fullscreen kept · boost paused"*). Remembered per tab.
 
 ---
 
@@ -73,7 +73,7 @@ You can always install straight from source - no store needed (requires Chrome 1
 | `scripting` | Inject the in-page hook on demand for Fullscreen mode. |
 | `storage` | Remember your per-tab level + the limiter preference (local only). |
 | `activeTab` | Act on the current tab when you use the popup. |
-| `host_permissions: <all_urls>` | So the in-page hook can run on whatever site you choose to boost. It only acts when you open the popup or move the slider - it does not run on pages you haven't touched. |
+| `host_permissions: <all_urls>` | So the in-page hook can run on whatever site you choose to boost. It runs only in tabs where you have set a level: injected when you open the popup or move the slider, and re-injected automatically after a reload or player swap while that tab's level is set. It never runs in tabs you have not adjusted. |
 
 ---
 
@@ -81,7 +81,7 @@ You can always install straight from source - no store needed (requires Chrome 1
 
 - **DRM sites** (Netflix, Disney+, Spotify web, Prime, etc.) can't be adjusted in-page, so they're boosted via capture mode instead - fullscreen is unavailable there while boosted.
 - **Loud, hot-mastered tracks** stop getting louder past ~2× with the limiter on - that's the limiter protecting your ears/headphones, not a bug. The upper range is headroom for quiet sources (a low podcast, an old upload). Turn the limiter off for raw gain.
-- **Reload auto-restore** is audible on its own on high-engagement sites like YouTube (Chrome's autoplay policy lets their audio resume without a click). On rarely-visited sites, and for capture-mode tabs, Chrome requires interaction first - the stored level snaps back the moment you reopen the popup.
+- **Reload auto-restore** is audible on its own on high-engagement sites like YouTube (Chrome's autoplay policy lets their audio resume without a click). On rarely-visited sites Chrome needs a click first: the level returns with your first click or key press on the page, or when you reopen the popup. Capture-mode tabs need the popup reopened.
 - **Browser pages** (`chrome://`, the Web Store, other extensions) can't be boosted and the popup says so.
 - Only **one capture per tab** exists in Chrome, so if another capture/booster extension already grabbed a tab, capture mode there will fail.
 
@@ -110,9 +110,9 @@ Missing yours, or spotted awkward wording? Adding or fixing a language is a sing
 
 ## Privacy
 
-This extension collects **no data** and uploads **nothing**. It stores only your per-tab volume level and the limiter on/off preference, using Chrome's on-device storage.
+This extension collects **no data** and uploads **nothing**. It stores only your per-tab settings (level, method in use, fullscreen preference; forgotten when the tab closes) and the limiter on/off preference, using Chrome's on-device storage.
 
-It makes exactly one kind of network request: for **same-origin media URLs**, a `Range: bytes=0-0` request to that media file, to check whether the URL redirects to another host. That check is required because hooking cross-origin media would silence the tab permanently, and the redirect is invisible from the page. It goes to whichever origin serves that media (the site you're on, or an embedded player's own host), the response is discarded, media on other origins is never requested, and nothing is ever sent to us or to a third party. See [PRIVACY.md](PRIVACY.md).
+It makes exactly one kind of network request: for **same-origin media URLs**, a `Range: bytes=0-0` request to that media file, to check whether the URL redirects to another host. That check is required because hooking cross-origin media would silence the tab permanently, and the redirect is invisible from the page. It runs when the extension is about to hook a media element, and ahead of time whenever it inspects a tab you have adjusted (opening the popup, moving the slider, re-applying after a reload or player swap): at most two media files per inspection and eight per page load, only for media that has already started loading. It goes to whichever origin serves that media (the site you're on, or an embedded player's own host), the response is discarded, media on other origins is never requested, and nothing is ever sent to us or to a third party. See [PRIVACY.md](PRIVACY.md).
 
 ---
 

@@ -3,6 +3,25 @@
 What changed in each release, in plain terms. Versions match the ones published on the
 [Chrome Web Store](https://chromewebstore.google.com/detail/lcbedgoeigfomodfdiepidklaoplonii).
 
+## 1.1.9 - 2026-09-08
+
+- **Fixed: a tab whose slider could go dead on sites Chrome has not yet allowed to play sound.**
+  On a site you rarely visit, setting a level before your first click on the page, or reloading
+  a page with a stored level, could leave the extension waiting forever for permission that never
+  comes; nothing worked in that tab until you navigated away. It now steps back after a moment and
+  applies the level with your first click instead.
+- **The audible player wins across frames.** On pages with a large muted background loop next to
+  the real player in an embedded frame, the boost could land on the silent loop while the popup
+  showed everything as fine. What you can hear now takes priority, in every frame.
+- **Capture mode bookkeeping.** A rare timing mix-up could make every slider move fail on a
+  captured tab until you reset it. The extension now checks with its audio engine first instead
+  of trusting its own notes, a late failure report can no longer wipe a working setting, and a
+  reset takes effect even if the extension is interrupted halfway.
+- **The popup's reset button and limiter switch work right after opening**, not only once the
+  first status has come back. An early reset click used to be lost and then overridden.
+- **Documentation:** the privacy policy and README now describe more precisely when the extension
+  runs in a tab and when its one redirect check happens, and list all per-tab settings it keeps.
+
 ## 1.1.8 - 2026-08-16
 
 - **A muted video can no longer hold on to the boost.** Some pages keep a silent clip looping in
@@ -15,9 +34,9 @@ What changed in each release, in plain terms. Versions match the ones published 
   extensions in the background; a page loaded before the update kept a leftover boost running
   that the new version could not control. In the worst case the two stacked and doubled the
   volume. The leftover now detects the situation and returns the tab to native volume.
-- **The status shown in the popup is now confirmed, not assumed.** Fullscreen capture only
-  reports success once audio is actually flowing, so the popup can no longer show an active
-  boost over a tab that stayed silent.
+- **The status shown in the popup is now confirmed, not assumed.** Capture mode only reports
+  success once the capture has actually started, so a capture that fails to start no longer
+  shows as an active boost.
 - **Navigating back to a page no longer revives a boost you turned off.** Chrome restores pages
   from a cache when you press back; the restored page now checks with the extension instead of
   resuming its old state.

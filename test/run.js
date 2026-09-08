@@ -94,7 +94,7 @@ function serveFixtures() {
       res.writeHead(200, { "Content-Type": "text/plain" });
       return res.end(`http://127.0.0.1:${adPort}/ad-tone.wav`);
     }
-    const file = path.join(__dirname, "fixtures", req.url === "/" ? "x-feed.html" : req.url);
+    const file = path.join(__dirname, "fixtures", p === "/" ? "x-feed.html" : p); // path only: fixtures take ?flags
     if (!file.startsWith(path.join(__dirname, "fixtures")) || !fs.existsSync(file)) {
       res.writeHead(404); return res.end("nope");
     }
@@ -1422,6 +1422,174 @@ const scenarios = {
     } finally { await page.close(); }
   },
 
+  // The autoplay-policy hang. On a document Chrome has not unlocked (no activation, no history of
+  // audible playback on that origin) AudioContext.resume() stays pending FOR GOOD - measured in
+  // Chrome 152: still pending after a later trusted click. An engage awaiting it never answered,
+  // wedging the frame's command chain and the worker's op with it: slider dead until the next
+  // navigation. This needs its own Chrome: the suite's browser runs with the autoplay policy
+  // switched off, and any evaluate() in the target document would hand it activation - so the
+  // page is reached through a script hop to a second origin and prepared by a URL flag instead.
+  async s41_suspended_engage_answers(ctx) {
+    const browser2 = await launchChrome({ autoplayPolicyOff: false });
+    let page;
+    try {
+      const sw2 = await getWorker(browser2);
+      await installSpy(sw2);
+      page = await browser2.newPage();
+      const target = `http://localhost:${ctx.port}/?auto=audible`;
+      await page.goto(`http://127.0.0.1:${ctx.port}/hop.html?to=${encodeURIComponent(target)}`, { waitUntil: "load" });
+      // Wait for the hop to land - from the worker's side only, no evaluate in the target document.
+      let tabId = null;
+      for (let i = 0; i < 50 && tabId == null; i++) {
+        await sleep(100);
+        tabId = await sw2.evaluate(async (p) => {
+          const tabs = await chrome.tabs.query({});
+          const t = tabs.find((x) => x.url && x.url.startsWith(`http://localhost:${p}/`) && x.status === "complete");
+          return t ? t.id : null;
+        }, ctx.port);
+      }
+      if (tabId == null) return "the hop never landed on the second origin";
+      await sleep(600); // the fixture adds its audible post on load
+      // The engage must ANSWER. Refusing is right (nothing is unlocked yet); hanging is the bug.
+      const res = await Promise.race([swSetGain(sw2, tabId, 3), sleep(8000).then(() => "hung")]);
+      if (res === "hung") return "BUG: setGain never returned - the engage waits on a resume() that will never settle";
+      const refusal = (await swSpyLog(sw2)).find((e) => e.cmd === "engage" && e.res && e.res.reason);
+      ctx.note(`first engage answered: ${JSON.stringify(refusal && refusal.res)}`);
+      if (!refusal || refusal.res.reason !== "suspended") return `expected a 'suspended' refusal, got ${JSON.stringify(refusal && refusal.res)}`;
+      // The first gesture in that frame: the one-shot retry pings, the worker re-engages, and this
+      // time the context is allowed to run.
+      await swClearLog(sw2);
+      const pos = await page.evaluate(() => {
+        const v = document.querySelector("video");
+        v.scrollIntoView({ block: "center" });
+        const r = v.getBoundingClientRect();
+        return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+      });
+      await page.mouse.click(pos.x, pos.y);
+      const { hit, elapsed } = await waitEngage(sw2, (r) => r.ok === true, 8000);
+      if (!hit) return "BUG: the boost never landed after the unlocking click";
+      ctx.note(`boost ${elapsed}ms after the click`);
+      return true;
+    } finally {
+      if (page) await page.close().catch(() => {});
+      await browser2.close().catch(() => {});
+    }
+  },
+
+  // Cross-frame candidate choice. A landing page keeps a big MUTED loop in the top document and
+  // the real, audible player in a smaller same-origin iframe. Ranking by playing-then-area picked
+  // the loop: the hook landed on silence, the pill went green, and nothing healed it (the iframe
+  // was never armed, and every re-probe chose the loop again).
+  async s42_cross_frame_prefers_audible(ctx) {
+    const page = await ctx.browser.newPage();
+    try {
+      await page.goto(`http://127.0.0.1:${ctx.port}/hero-host.html`, { waitUntil: "load" });
+      await sleep(1200); // the hero autoplays, the inner feed adds its audible post
+      const tabId = await tabIdOf(ctx.sw, ctx.port);
+      const res = await swSetGain(ctx.sw, tabId, 3);
+      const engage = (await swSpyLog(ctx.sw)).find((e) => e.cmd === "engage" && e.res && e.res.ok);
+      ctx.note(`mode=${res.mode} confirmed=${res.confirmed} frame=${engage && engage.frameId}`);
+      if (res.mode !== "element") return `expected element mode, got ${JSON.stringify(res)}`;
+      if (!engage || engage.frameId === 0) return "BUG: the muted top-frame loop won the boost over the audible iframe player";
+      if (!res.confirmed) return "BUG: the hook landed on an element with no signal";
+      return true;
+    } finally { await page.close(); }
+  },
+
+  // An iframe navigating itself: the player loads the next episode at its own new address. The
+  // host's src attribute never changes and the frame id survives, so the recorded hook points at
+  // a document that no longer runs the script. A review claimed nothing re-hooks it; in fact the
+  // tab's load state covers sub-frame navigations, so the worker's tabs.onUpdated restore does.
+  // Coverage, not a bug fix: this pins that platform behavior (it passes on the old code too).
+  async s43_iframe_self_navigation_rehooks(ctx) {
+    const page = await ctx.browser.newPage();
+    try {
+      await page.goto(`http://127.0.0.1:${ctx.port}/frame-same-origin.html`, { waitUntil: "load" });
+      await sleep(1000);
+      const tabId = await tabIdOf(ctx.sw, ctx.port);
+      const r1 = await swSetGain(ctx.sw, tabId, 0.05); // ducked: unity vs 0.05 is unmistakable in rms
+      if (r1.mode !== "element" || !r1.confirmed) return `setup failed: ${JSON.stringify(r1)}`;
+      const first = (await swSpyLog(ctx.sw)).find((e) => e.cmd === "engage" && e.res && e.res.ok);
+      if (!first || first.frameId === 0) return `setup failed: hook not in the iframe (${JSON.stringify(first)})`;
+      await swClearLog(ctx.sw);
+      // The frame moves on by itself: a new document, same frame id, no attribute change anywhere.
+      const inner = page.frames().find((f) => f !== page.mainFrame());
+      await inner.evaluate(() => { setTimeout(() => location.assign("/?auto=audible&episode=2"), 0); });
+      const { hit, elapsed } = await waitEngage(ctx.sw, (r) => r.ok === true, 8000);
+      if (!hit) return "BUG: nothing re-hooked the player after the iframe navigated itself";
+      const m = await ctx.sw.evaluate((t, f) =>
+        chrome.tabs.sendMessage(t, { cmd: "measure" }, { frameId: f }).catch(() => null), tabId, hit.frameId);
+      ctx.note(`re-hooked ${elapsed}ms after the navigation, rms ${m && m.ok ? m.rms.toFixed(3) : "n/a"}`);
+      if (!m || !m.ok || m.rms > 0.1) return `BUG: the new document plays unducked (measure ${JSON.stringify(m)})`;
+      return true;
+    } finally { await page.close(); }
+  },
+
+  // The capture engine is asked before the active list is trusted. A live graph whose list entry
+  // was stripped (an unmark for the OLD stream landing after a newer start was marked) used to send
+  // the worker straight to getMediaStreamId, which Chrome refuses for a tab it is still capturing -
+  // every slider move failed until release. Simulated at the message layer: the engine answers the
+  // update, the list says nothing.
+  async s44_capture_asks_engine_before_list(ctx) {
+    const page = await newFeedPage(ctx.browser, ctx.port); // no video: the probe routes to capture
+    const tabId = await tabIdOf(ctx.sw, ctx.port);
+    try {
+      await ctx.sw.evaluate(async (t) => {
+        await ensureOffscreen();
+        await unmarkActive(t);
+        const origSend = chrome.runtime.sendMessage.bind(chrome.runtime);
+        const origStream = chrome.tabCapture.getMediaStreamId.bind(chrome.tabCapture);
+        globalThis.__s44 = { origSend, origStream, streamCalls: 0 };
+        chrome.runtime.sendMessage = (m, ...rest) => {
+          if (m && m.target === "offscreen" && m.cmd === "update" && m.tabId === t) return Promise.resolve({ ok: true });
+          return origSend(m, ...rest);
+        };
+        chrome.tabCapture.getMediaStreamId = (...a) => { globalThis.__s44.streamCalls++; return origStream(...a); };
+      }, tabId);
+      const res = await swSetGain(ctx.sw, tabId, 3);
+      const calls = await ctx.sw.evaluate(() => globalThis.__s44.streamCalls);
+      const active = await ctx.sw.evaluate(() => sget("active"));
+      const listed = Array.isArray(active) && active.includes(tabId);
+      ctx.note(`mode=${res.mode} streamIdCalls=${calls} listed=${listed}`);
+      if (calls > 0) return "BUG: the worker asked for a new stream id although the engine already held this tab";
+      if (res.mode !== "capture") return `expected capture mode through the live graph, got ${JSON.stringify(res)}`;
+      if (!listed) return "BUG: the healed entry was not re-marked";
+      return true;
+    } finally {
+      await ctx.sw.evaluate(() => {
+        if (!globalThis.__s44) return;
+        chrome.runtime.sendMessage = globalThis.__s44.origSend;
+        chrome.tabCapture.getMediaStreamId = globalThis.__s44.origStream;
+        delete globalThis.__s44;
+      });
+      await swSetGain(ctx.sw, tabId, 1);
+      await page.close();
+    }
+  },
+
+  // A late captureFailed (an old stream's start losing the race) must not wipe a mode a newer
+  // action has recorded - here a working element hook.
+  async s45_late_capture_failed_keeps_element(ctx) {
+    const page = await newFeedPage(ctx.browser, ctx.port);
+    try {
+      await page.evaluate(() => window.feed.addAudible());
+      await sleep(300);
+      const tabId = await tabIdOf(ctx.sw, ctx.port);
+      const r1 = await swSetGain(ctx.sw, tabId, 3);
+      if (r1.mode !== "element") return `setup failed: ${JSON.stringify(r1)}`;
+      // the stale failure report arrives from an extension context outside the worker
+      await ctx.sw.evaluate((t) => chrome.scripting.executeScript({
+        target: { tabId: t },
+        func: (id) => { chrome.runtime.sendMessage({ type: "captureFailed", tabId: id }); },
+        args: [t],
+      }), tabId);
+      await sleep(400);
+      const mode = await swGetMode(ctx.sw, tabId);
+      if (!mode || mode.mode !== "element") return `BUG: a stale captureFailed wiped the live element mode (mode=${JSON.stringify(mode)})`;
+      return true;
+    } finally { await page.close(); }
+  },
+
   // Release must reach the swapped-in hook: boost, swap, click (boost lands), then 1.0x.
   async s8_release_after_swap(ctx) {
     const page = await newFeedPage(ctx.browser, ctx.port);
@@ -1444,21 +1612,29 @@ const scenarios = {
   },
 };
 
-// ---- main ---------------------------------------------------------------
-(async () => {
-  const { server, adServer, counts, port } = await serveFixtures();
-  const browser = await puppeteer.launch({
+// The suite's browser runs with the autoplay policy switched OFF (media plays unattended). s41
+// needs the real policy in a fresh profile: puppeteer gives every launch its own temp profile, so
+// that browser has never heard audio from any origin.
+function launchChrome(opts) {
+  const o = opts || {};
+  return puppeteer.launch({
     executablePath: CHROME,
     headless: false, // extension + media playback: headed is the reliable path; window is small and brief
     args: [
       `--disable-extensions-except=${REPO}`,
       `--load-extension=${REPO}`,
-      "--autoplay-policy=no-user-gesture-required",
+      ...(o.autoplayPolicyOff === false ? [] : ["--autoplay-policy=no-user-gesture-required"]),
       "--mute-audio", // audio still flows through WebAudio graphs; just don't blast the speakers
       "--window-size=800,600",
       "--no-first-run", "--no-default-browser-check",
     ],
   });
+}
+
+// ---- main ---------------------------------------------------------------
+(async () => {
+  const { server, adServer, counts, port } = await serveFixtures();
+  const browser = await launchChrome();
 
   let failed = 0;
   try {

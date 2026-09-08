@@ -81,6 +81,22 @@ async function ensureContentScript(tabId) {
 }
 const toFrame = (tabId, frameId, m) =>
   chrome.tabs.sendMessage(tabId, m, frameId != null ? { frameId } : undefined).catch(() => null);
+// An engage that never answers must not hang the worker: the frame runs its commands through one
+// chain, so a wedged engage there stalls every later command too, and the awaiting worker op with
+// it (content.js bounds its own waits; this is the belt). Past the deadline the frame is told to
+// stand down - the stop queues BEHIND the late engage in the frame's chain, so even a hook that
+// lands afterwards is unwound - and the engage counts as a refusal, never as a delivery failure.
+const ENGAGE_DEADLINE_MS = 10000;
+async function engageFrame(tabId, frameId, m) {
+  let timer;
+  const res = await Promise.race([
+    toFrame(tabId, frameId, m),
+    new Promise((r) => { timer = setTimeout(() => r({ ok: false, reason: "engage-timeout" }), ENGAGE_DEADLINE_MS); }),
+  ]);
+  clearTimeout(timer);
+  if (res && res.reason === "engage-timeout") toFrame(tabId, null, { cmd: "stop" });
+  return res;
+}
 
 // ---- probe: broadcast to frames, aggregate candidate reports, pick the best ----
 const probeWaiters = new Map(); // probeId -> { tabId, cands, timer }; keyed per-probe so two
@@ -102,7 +118,12 @@ function serialized(tabId, fn) {
 function pickBest(cands) {
   const safe = cands.filter((c) => c.cand.hasElement && c.cand.safe);
   if (!safe.length) return null;
-  safe.sort((a, b) => (b.cand.playing === a.cand.playing ? b.cand.area - a.cand.area : b.cand.playing - a.cand.playing));
+  // Same order as content.js rankElements: playing, then AUDIBLE, then biggest. Across frames the
+  // audible check matters just as much - a big muted hero loop in the top frame must not beat the
+  // audible player in an iframe, or the boost lands on silence with a green pill over it (and no
+  // self-heal: the iframe is never armed, and every re-probe picks the loop again).
+  const rank = (c) => (c.cand.playing ? 2 : 0) + (c.cand.audible ? 1 : 0);
+  safe.sort((a, b) => rank(b) - rank(a) || b.cand.area - a.cand.area);
   return safe[0]; // { frameId, cand }
 }
 async function predictMode(tabId) {
@@ -146,19 +167,25 @@ const clearMode = (tabId) => sdel(TABMODE(tabId));
 async function captureSetGain(tabId, gain, useLimiter) {
   const createdFresh = await ensureOffscreen();
   if (createdFresh) await withActiveLock(() => setActive([])); // new doc → no graphs (same lock as mark/unmark)
-  const active = await getActive();
-  if (active.includes(tabId)) {
-    // The active list can LIE: if the trackEnded message was lost (worker mid-restart when the
-    // capture died on a navigation), the entry stays while the graph is gone - and an update
-    // sent into that void leaves the slider dead for the TAB'S WHOLE LIFE, since a reload
-    // clears neither the list nor the tab id. So the update is acknowledged: no ack, no graph
-    // -> heal the entry and fall through to a fresh start.
-    const ack = await chrome.runtime
-      .sendMessage({ target: "offscreen", cmd: "update", tabId, gain, useLimiter })
-      .catch(() => null);
-    if (ack && ack.ok) return;
-    await unmarkActive(tabId);
-  }
+  // Ask the engine FIRST, whatever the active list says: the list can lie in both directions.
+  // Entry without a graph - the trackEnded message was lost (worker mid-restart when the capture
+  // died on a navigation): an update sent into that void would leave the slider dead for the
+  // TAB'S WHOLE LIFE, since a reload clears neither the list nor the tab id; the ack says "no
+  // graph", the entry is healed, a fresh start follows. Graph without an entry - an unmark for
+  // the OLD stream (trackEnded / captureFailed) landing after a newer start was already marked:
+  // Chrome refuses a second stream id for a tab it is still capturing, so going straight to
+  // getMediaStreamId would fail every slider move until release; the ack finds that graph.
+  const ack = await chrome.runtime
+    .sendMessage({ target: "offscreen", cmd: "update", tabId, gain, useLimiter })
+    .catch(() => null);
+  if (ack && ack.ok) { await markActive(tabId); return; }
+  await unmarkActive(tabId);
+  // Nothing answered for this tab. Whatever the engine may still hold (a graph mid-ramp after a
+  // lost ack, a cancelled start) is torn down NOW, tracks included and acknowledged, so the new
+  // stream id below is not refused for a capture that is still winding down.
+  await chrome.runtime
+    .sendMessage({ target: "offscreen", cmd: "stop", tabId, immediate: true })
+    .catch(() => null);
   const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tabId });
   // Marked BEFORE the start settles so a concurrent setGain routes into the acked-update path
   // (which retargets the in-flight start) instead of racing a second start. The start itself is
@@ -177,12 +204,14 @@ async function captureStop(tabId) { toOffscreen({ cmd: "stop", tabId }); await u
 
 // ---- release (1.0× / off): tear down whichever path, restore fullscreen ----
 async function release(tabId) {
+  // Intent first: with the level gone, a worker death mid-release cannot leave a stored level
+  // that the next reload or popup open would resurrect. Everything after is idempotent cleanup.
+  await sdel(TABGAIN(tabId));
   // Broadcast the stop to ALL frames, not just the recorded one: TABMODE can be stale or cleared
   // (mid-restore), and a re-probe may have retargeted the mode to a different frame earlier - a
   // hook we engaged anywhere must never survive a release. stop() is idempotent in every frame.
   await toFrame(tabId, null, { cmd: "stop" });
   await captureStop(tabId); // also release capture if it was the active path
-  await sdel(TABGAIN(tabId));
   await clearMode(tabId);
 }
 
@@ -190,6 +219,7 @@ async function release(tabId) {
 // fsPriority is the per-tab user choice "I'd rather keep native fullscreen than boost via capture".
 // conflict = the element is already hooked by another app/page (the case we surface + explain).
 async function applyCaptureOrPause(tabId, gain, useLimiter, conflict) {
+  const before = JSON.stringify(await getMode(tabId)); // for the compare-and-clear in the catch
   // Whatever happens next, no element hook of OURS may stay hot underneath: a frame retarget or a
   // transient engage failure could otherwise leave element gain AND capture gain stacked (double
   // boost). The broadcast is a no-op in frames without a hook and can't touch a foreign app's hook.
@@ -209,7 +239,10 @@ async function applyCaptureOrPause(tabId, gain, useLimiter, conflict) {
     // Couldn't capture (e.g. the activeTab grant was revoked by a reload, or another app holds the
     // tab). Don't leave a 'capture' mode pointing at a graph that doesn't exist, and don't tell the
     // popup it's capturing - clear the mode and report 'none' so a later popup re-apply re-probes.
-    await clearMode(tabId);
+    // Compare-and-clear: only the record this call started from is dropped. The restore path
+    // runs this outside the per-tab queue, and a user action may have recorded a working element
+    // hook meanwhile (its captureStop is what cancelled our start) - that record must stay.
+    if (JSON.stringify(await getMode(tabId)) === before) await clearMode(tabId);
     return { mode: "none", conflict: !!conflict, failed: true };
   }
 }
@@ -225,7 +258,7 @@ async function setGain(tabId, gain, useLimiter) {
 
   // Element mode preserves fullscreen AND boosts, so always prefer it when the probe allows.
   if (info.mode === "element") {
-    let res = await toFrame(tabId, info.frameId, { cmd: "engage", gain, useLimiter });
+    let res = await engageFrame(tabId, info.frameId, { cmd: "engage", gain, useLimiter });
     if (res === null) {
       // Delivery failure (frame gone / no receiver) - NOT a refusal. The player may live in a
       // fresh frame now (SPA replaced its iframe), so re-probe once before abandoning element mode.
@@ -236,13 +269,14 @@ async function setGain(tabId, gain, useLimiter) {
       // Retargeting to a different frame: make sure the old frame's hook (if any survived) is
       // parked at unity first - it would otherwise stay hot alongside the new one.
       if (fresh.frameId !== info.frameId) await toFrame(tabId, info.frameId, { cmd: "stop" });
-      res = await toFrame(tabId, fresh.frameId, { cmd: "engage", gain, useLimiter });
+      res = await engageFrame(tabId, fresh.frameId, { cmd: "engage", gain, useLimiter });
     }
     if (res && res.ok) {
       // The tab may have been in CAPTURE mode before this probe picked element (a hookable player
       // appeared after a "next episode" swap): never leave the offscreen graph applying its gain
-      // UNDER the fresh element hook - the two would stack to double volume.
-      if ((await getActive()).includes(tabId)) await captureStop(tabId);
+      // UNDER the fresh element hook - the two would stack to double volume. Unconditional: the
+      // active list can miss a live graph (see captureSetGain), and a stop without one is a no-op.
+      await captureStop(tabId);
       return { mode: "element", confirmed: !!res.signal };
     }
     // Hook couldn't engage. reason 'already-hooked' = another app/page owns the element (a CONFLICT
@@ -294,9 +328,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg.type === "captureFailed") {
     // Offscreen couldn't open the capture (expired streamId, another capturer, …). Drop the
-    // bookkeeping so the active list / mode never claim a graph that doesn't exist.
+    // bookkeeping so the active list / mode never claim a graph that doesn't exist - but only a
+    // CAPTURE record: this arrives outside the per-tab queue, and a failed start for an old
+    // stream must not wipe an element mode that a newer user action has recorded meanwhile.
     unmarkActive(msg.tabId);
-    clearMode(msg.tabId);
+    getMode(msg.tabId).then((m) => { if (m && m.mode === "capture") return clearMode(msg.tabId); }).catch(() => {});
     return;
   }
 
@@ -410,16 +446,17 @@ async function restoreAfterLoad(tabId, gain, useLimiter, prior) {
       // frame's hook (if it survived) so it can't stay hot alongside the new one.
       if (prior && prior.mode === "element" && prior.frameId != null && prior.frameId !== info.frameId)
         await toFrame(tabId, prior.frameId, { cmd: "stop" });
-      const res = await toFrame(tabId, info.frameId, { cmd: "engage", gain: g, useLimiter });
+      const res = await engageFrame(tabId, info.frameId, { cmd: "engage", gain: g, useLimiter });
       if (res && res.ok) {
-        // Same as setGain: a prior CAPTURE graph must not keep boosting under the new hook.
-        if ((await getActive()).includes(tabId)) await captureStop(tabId);
+        // Same as setGain: a prior CAPTURE graph must not keep boosting under the new hook
+        // (unconditional - the active list can miss a live graph, a stop without one is a no-op).
+        await captureStop(tabId);
         // Engage can take seconds (the redirect probe's deadline, which a late joiner may
         // extend to CHAIN_TOTAL_MAX, plus the resume wait and measure) - re-verify the user
         // didn't release or retarget the level meanwhile; their action must always win.
         const after = await sget(TABGAIN(tabId));
         if (!isActiveGain(after)) { await toFrame(tabId, null, { cmd: "stop" }); await clearMode(tabId); }
-        else if (after !== g) await toFrame(tabId, info.frameId, { cmd: "engage", gain: after, useLimiter });
+        else if (after !== g) await engageFrame(tabId, info.frameId, { cmd: "engage", gain: after, useLimiter });
         return;
       }
       // 'already-hooked' = a conflict → resolve to capture/paused (honoring fsPriority) and stop.
@@ -451,7 +488,9 @@ async function restoreAfterLoad(tabId, gain, useLimiter, prior) {
       // stop FIRST: dropping the mode record also drops the frameId, so this is the last moment
       // the worker can disarm a frame that an earlier engage armed - an armed frame it no longer
       // tracks would keep self-hooking new elements at a level the slider no longer controls.
-      if (res && res.reason === "suspended") {
+      // An engage that hit the worker's deadline is treated the same: retrying would only wait
+      // out the deadline again, eight times over.
+      if (res && (res.reason === "suspended" || res.reason === "engage-timeout")) {
         await toFrame(tabId, null, { cmd: "stop" });
         await clearMode(tabId);
         return;

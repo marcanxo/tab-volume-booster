@@ -220,6 +220,35 @@ async function init() {
     pushGain(g);
   });
 
+  // The buttons are live in that window too: a user who opened the popup to hit reset clicks
+  // well inside it, and a click with no listener yet is not just lost - the prepare result then
+  // snaps the thumb to the stored level and re-applies it, the opposite of what was clicked.
+  // Reset counts as a touch for the same reason.
+  els.limiter.addEventListener("click", () => {
+    useLimiter = !useLimiter;
+    els.limiter.setAttribute("aria-checked", String(useLimiter));
+    chrome.storage.local.set({ [LIMITER_KEY]: useLimiter });
+    const g = gainFromPos(parseFloat(els.slider.value));
+    if (!isUnity(g)) pushGain(g); // at 1× nothing is engaged - pushing would just demote the pill
+  });
+
+  els.fsToggle.addEventListener("click", () => {
+    fsPriority = els.fsToggle.getAttribute("aria-checked") !== "true";
+    els.fsToggle.setAttribute("aria-checked", String(fsPriority));
+    chrome.runtime.sendMessage({ type: "setFsPriority", tabId: tab.id, value: fsPriority }, (res) => {
+      if (!res || !res.mode) return;
+      showMode(res.mode, res.conflict, fsPriority);
+      if (res.failed === true) els.body.classList.add("paused-view"); // same honest dim as pushGain
+    });
+  });
+
+  els.reset.addEventListener("click", () => {
+    userTouched = true;
+    els.slider.value = posFromGain(UNITY);   // snap the thumb to center (1×)
+    render(UNITY);
+    pushGain(UNITY);                          // setGain(1.0) → release → "Not boosting"
+  });
+
   // Non-destructive predict + restore (worker probes the page and returns mode + saved level).
   const prep = await new Promise((resolve) =>
     chrome.runtime.sendMessage({ type: "prepare", tabId: tab.id }, (r) => resolve(r || { mode: "none", gain: 1 })) // no worker answer → claim nothing, not "capture"
@@ -240,30 +269,6 @@ async function init() {
   // competing call here could commit a premature "capture" before the player has loaded.
   // Skip too when the user already dragged: their push is newer than the stored level.
   if (!isUnity(gain) && !prep.restoring && !userTouched) pushGain(gain);
-
-  els.limiter.addEventListener("click", () => {
-    useLimiter = !useLimiter;
-    els.limiter.setAttribute("aria-checked", String(useLimiter));
-    chrome.storage.local.set({ [LIMITER_KEY]: useLimiter });
-    const g = gainFromPos(parseFloat(els.slider.value));
-    if (!isUnity(g)) pushGain(g); // at 1× nothing is engaged - pushing would just demote the pill
-  });
-
-  els.fsToggle.addEventListener("click", () => {
-    fsPriority = els.fsToggle.getAttribute("aria-checked") !== "true";
-    els.fsToggle.setAttribute("aria-checked", String(fsPriority));
-    chrome.runtime.sendMessage({ type: "setFsPriority", tabId: tab.id, value: fsPriority }, (res) => {
-      if (!res || !res.mode) return;
-      showMode(res.mode, res.conflict, fsPriority);
-      if (res.failed === true) els.body.classList.add("paused-view"); // same honest dim as pushGain
-    });
-  });
-
-  els.reset.addEventListener("click", () => {
-    els.slider.value = posFromGain(UNITY);   // snap the thumb to center (1×)
-    render(UNITY);
-    pushGain(UNITY);                          // setGain(1.0) → release → "Not boosting"
-  });
 }
 
 applyI18n();

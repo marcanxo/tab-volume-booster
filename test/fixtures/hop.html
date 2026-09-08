@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>hop fixture</title>
+</head>
+<body>
+<!-- Script-initiated navigation to the URL in ?to=, a beat after load. The document it lands on
+     carries NO user activation (unlike anything reached through a DevTools navigation), which is
+     the state a page has after a typed URL or a link from another site - the autoplay policy's
+     locked state that the resume scenario needs. -->
+<script>
+  setTimeout(() => { location.replace(new URLSearchParams(location.search).get("to")); }, 100);
+</script>
+</body>
+</html>

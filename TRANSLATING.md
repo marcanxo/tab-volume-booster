@@ -25,8 +25,8 @@ Chrome picks the language automatically from the user's browser UI language and 
 
 - **`appDesc` must be ≤ 132 characters** - Chrome rejects the package otherwise.
 - The popup is only **268px wide**: keep the status labels (`modeElement`, `modePaused`, `modeCapture`, `modeCaptureConflict`, `modeNone`) short, ideally under ~30 characters.
-- Keep numeric level forms exactly as-is: `1×`, `6x`, `1.0×`, `0×` (Latin digits, same `×`), and keep the ` · ` separator where the English has it.
-- `fsLabel` is the visible name of the *Prefer fullscreen* toggle. Three messages quote that name (`pausedMsgConflict`, `pausedMsgPref`, `captureMsgConflict`) - the quoted text there must **exactly match your `fsLabel` translation**, in your language's own quotation marks.
+- Keep numeric level forms exactly as-is: `1×`, `6x`, `1.0×` (Latin digits, same `×`), and keep the ` · ` separator where the English has it.
+- `fsLabel` is the visible name of the *Prefer fullscreen* toggle. Four messages quote that name (`pausedMsgConflict`, `pausedMsgPref`, `captureMsgConflict`, `modePausedTitlePref`) - the quoted text there must **exactly match your `fsLabel` translation**, in your language's own quotation marks.
 - Don't translate brand names: **Tab Volume Booster**, YouTube, Chrome.
 
 ## Improving an existing translation

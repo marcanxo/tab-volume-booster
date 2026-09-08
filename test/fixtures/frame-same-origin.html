@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>same-origin iframe fixture</title>
+<style>
+  body { background: #0b1219; margin: 0; padding: 8px; }
+  iframe { width: 620px; height: 500px; border: 0; display: block; }
+</style>
+</head>
+<body>
+<!-- The player lives in a SAME-ORIGIN iframe that navigates itself between episodes: the host
+     never touches the src attribute, so nothing in the top document changes. -->
+<iframe id="inner" src="/?auto=audible"></iframe>
+</body>
+</html>

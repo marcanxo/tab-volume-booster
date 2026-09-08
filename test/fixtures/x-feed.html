@@ -230,6 +230,10 @@
         if (main) { main.muted = false; main.volume = 1; main.play(); }
       }
     };
+    // ?auto=audible: add an audibly playing post on load, for scenarios that must not run any
+    // script of their own in this document (a page.evaluate carries user activation - the one
+    // thing the autoplay-policy scenario has to keep absent) or that load this feed in a frame.
+    if (new URLSearchParams(location.search).get("auto") === "audible") window.feed.addAudible();
     window.feedReady = true;
   })();
 </script>

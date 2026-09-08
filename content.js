@@ -422,6 +422,10 @@
   swapMo.observe(document.documentElement, {
     childList: true, subtree: true, attributes: true, attributeFilter: ["src"]
   });
+  // (An iframe navigating ITSELF - a player loading the next episode at its own new address -
+  // changes nothing the observer above can see, but needs no signal from here: the tab's load
+  // state covers sub-frame navigations, so the worker's tabs.onUpdated restore re-probes and
+  // re-hooks on its own. Pinned by test s43.)
   // Unmutes are INVISIBLE to the observer above: muted/volume are properties, not attributes.
   // volumechange doesn't bubble, but a CAPTURE listener on an ancestor still sees it - one
   // document-level listener covers every media element, present or future. Urgent only when the
@@ -709,7 +713,10 @@
     if (back >= 0) {
       const g = retired.splice(back, 1)[0];
       S.ctx = g.ctx; S.src = g.src; S.gain = g.gain; S.limiter = g.limiter; S.analyser = g.analyser; S.el = g.el;
-      try { await S.ctx.resume(); } catch (_) {}
+      // Same bound as the fresh-context path below: a parked context Chrome will not let run
+      // again must not hang this engage (the graph is re-adopted either way; the level simply
+      // lands once the page is unlocked).
+      await Promise.race([S.ctx.resume().catch(() => {}), new Promise((r) => setTimeout(r, 150))]);
       if (S.ctx.state === "running") hotCtx = S.ctx;
       S.gain.gain.setTargetAtTime(gain, S.ctx.currentTime, 0.02);
       applyLimiter(S.useLimiter, false);
@@ -738,7 +745,12 @@
 
       // Confirm the context can actually RUN before hooking - hooking into a suspended
       // context would silence the element. If it won't run, bail (nothing hooked yet).
-      try { await ctx.resume(); } catch (_) {}
+      // The resume promise is never awaited on its own: on a document the autoplay policy has
+      // not unlocked, Chrome keeps it pending FOR GOOD (measured: still pending after a later
+      // trusted click, since nothing ever calls resume() on this context again). An engage that
+      // never answers would wedge this frame's command chain and the worker's await with it -
+      // slider dead for the document's life. Bounded, the refusal below runs as designed.
+      await Promise.race([ctx.resume().catch(() => {}), new Promise((r) => setTimeout(r, 150))]);
       if (ctx.state !== "running") await new Promise((r) => setTimeout(r, 150));
       if (ctx.state !== "running") {
         try { ctx.close(); } catch (_) {}

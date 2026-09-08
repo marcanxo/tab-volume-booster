@@ -86,18 +86,35 @@ async function start(tabId, streamId, gain, useLimiter) {
     return false;
   }
 
-  const ctx = new AudioContext();
-  const source = ctx.createMediaStreamSource(stream);
-  const gainNode = ctx.createGain();
-  gainNode.gain.value = entry.latest.gain;   // freshest values - an 'update' may have retargeted us
-  const limiter = makeLimiter(ctx);
+  let ctx, graph;
+  try {
+    ctx = new AudioContext();
+    const source = ctx.createMediaStreamSource(stream);
+    const gainNode = ctx.createGain();
+    gainNode.gain.value = entry.latest.gain;   // freshest values - an 'update' may have retargeted us
+    const limiter = makeLimiter(ctx);
 
-  const graph = { ctx, source, gain: gainNode, limiter, stream };
-  // Static graph - limiter always in the path; toggled by ramping its ratio, never by rewiring.
-  source.connect(gainNode);
-  gainNode.connect(limiter);
-  limiter.connect(ctx.destination);
-  applyLimiter(graph, entry.latest.useLimiter, true);
+    graph = { ctx, source, gain: gainNode, limiter, stream };
+    // Static graph - limiter always in the path; toggled by ramping its ratio, never by rewiring.
+    source.connect(gainNode);
+    gainNode.connect(limiter);
+    limiter.connect(ctx.destination);
+    applyLimiter(graph, entry.latest.useLimiter, true);
+  } catch (err) {
+    // A throw here (no audio output, context limit) must settle the placeholder exactly like a
+    // failed getUserMedia: an entry that never settles would leave the worker's start await -
+    // and with it the tab's whole op queue - waiting forever, every later update returning that
+    // dead promise. Same bookkeeping as above.
+    console.error("capture graph failed for tab", tabId, err);
+    try { stream.getTracks().forEach((t) => t.stop()); } catch (_) {}
+    if (ctx) { try { ctx.close(); } catch (_) {} }
+    if (graphs.get(tabId) === entry) {
+      graphs.delete(tabId);
+      try { chrome.runtime.sendMessage({ type: "captureFailed", tabId }).catch(() => {}); } catch (_) {}
+    }
+    settle(false);
+    return false;
+  }
   graphs.set(tabId, graph);
 
   // Reload / navigation kills the capture track → clean up and notify the worker.
@@ -130,21 +147,24 @@ function update(tabId, gain, useLimiter) {
   return true;
 }
 
-function stop(tabId) {
+function stop(tabId, immediate) {
   const g = graphs.get(tabId);
   if (!g) return;
   if (g.pending) { g.cancelled = true; graphs.delete(tabId); return; } // cancel an in-flight start
-  // Pop-free release: detach from the map now (so a new start builds fresh), ramp to unity,
-  // then tear down once the ramp has settled.
-  graphs.delete(tabId);
-  try { g.gain.gain.setTargetAtTime(1, g.ctx.currentTime, 0.02); } catch (_) {}
-  setTimeout(() => {
+  graphs.delete(tabId); // detach from the map now, so a new start builds fresh
+  const teardown = () => {
     try { g.source.disconnect(); } catch (_) {}
     try { g.gain.disconnect(); } catch (_) {}
     try { g.limiter.disconnect(); } catch (_) {}
     try { g.stream.getTracks().forEach((t) => t.stop()); } catch (_) {}
     try { g.ctx.close(); } catch (_) {}
-  }, 120);
+  };
+  // immediate: the worker is about to restart this tab's capture, and Chrome refuses a new stream
+  // id while the old tracks are alive - so no ramp, the tracks are gone before the ack goes out.
+  if (immediate) { teardown(); return; }
+  // Pop-free release: ramp to unity, then tear down once the ramp has settled.
+  try { g.gain.gain.setTargetAtTime(1, g.ctx.currentTime, 0.02); } catch (_) {}
+  setTimeout(teardown, 120);
 }
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
@@ -152,7 +172,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.cmd === "start") {
     // Async ack: resolves only once the capture is genuinely live (or has failed).
     start(msg.tabId, msg.streamId, msg.gain, msg.useLimiter)
-      .then((ok) => { try { sendResponse({ ok: !!ok }); } catch (_) {} });
+      .then((ok) => { try { sendResponse({ ok: !!ok }); } catch (_) {} })
+      .catch(() => { try { sendResponse({ ok: false }); } catch (_) {} }); // never leave the worker waiting
     return true;
   }
   if (msg.cmd === "update") {
@@ -165,5 +186,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     sendResponse({ ok: r });
     return;
   }
-  if (msg.cmd === "stop") stop(msg.tabId);
+  if (msg.cmd === "stop") {
+    stop(msg.tabId, !!msg.immediate);
+    sendResponse({ ok: true }); // acked, so a caller that restarts right after can rely on the teardown
+  }
 });
