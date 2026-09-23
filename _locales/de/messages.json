@@ -104,6 +104,9 @@
   "captureMsgConflict": {
     "message": "Boost läuft, aber ohne Vollbild: Diese Seite verarbeitet ihren Ton bereits selbst (oder eine andere App tut es), daher wird die Tab-Aufnahme verwendet. Aktiviere „Vollbild bevorzugen“, um stattdessen das Vollbild zu behalten (ohne Boost)."
   },
+  "staleMsg": {
+    "message": "Boost läuft, aber ohne Vollbild: Die Erweiterung wurde aktualisiert, während dieser Tab offen war, und ihre alte Version hält den Player noch fest. Lade den Tab neu, dann geht Vollbild wieder."
+  },
   "modeNone": {
     "message": "Kein Boost"
   },

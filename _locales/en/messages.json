@@ -135,6 +135,10 @@
     "message": "Boost is on, but fullscreen isn't: this page already handles its own audio (or another app does), so tab capture is used. Turn on “Prefer fullscreen” to keep fullscreen instead (no boost).",
     "description": "Explanation box in the capture+conflict state. Quotes the fsLabel name. Leads with the boost being ON, see modeCaptureTitleConflict."
   },
+  "staleMsg": {
+    "message": "Boost is on, but fullscreen isn't: the extension was updated while this tab was open, and its previous version still holds the player. Reload the tab to get fullscreen back.",
+    "description": "Explanation box (and capture-pill tooltip) when this tab was open while the extension updated: the previous version's hook still sits on the player, so capture is used until the tab is reloaded. Leads with the boost being ON, like captureMsgConflict."
+  },
   "modeNone": {
     "message": "Not boosting",
     "description": "Neutral status pill at 1× (off). Keep short."

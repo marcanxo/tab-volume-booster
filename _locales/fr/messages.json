@@ -104,6 +104,9 @@
   "captureMsgConflict": {
     "message": "Le boost est actif, mais pas le plein écran : cette page gère déjà son propre audio (ou une autre application le fait), le boost passe donc par la capture. Activez « Priorité au plein écran » pour conserver le plein écran (sans boost)."
   },
+  "staleMsg": {
+    "message": "Le boost est actif, mais pas le plein écran : l'extension a été mise à jour pendant que cet onglet était ouvert, et son ancienne version garde encore la main sur le lecteur. Rechargez l'onglet pour retrouver le plein écran."
+  },
   "modeNone": {
     "message": "Aucun boost"
   },

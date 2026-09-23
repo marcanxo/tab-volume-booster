@@ -104,6 +104,9 @@
   "captureMsgConflict": {
     "message": "Boost aktif, tetapi layar penuh tidak tersedia: halaman ini sudah menangani audionya sendiri (atau aplikasi lain yang menanganinya), jadi perekaman tab digunakan. Aktifkan “Utamakan layar penuh” untuk mempertahankan layar penuh (tanpa boost)."
   },
+  "staleMsg": {
+    "message": "Boost aktif, tetapi layar penuh tidak tersedia: ekstensi diperbarui saat tab ini terbuka, dan versi sebelumnya masih memegang pemutar. Muat ulang tab untuk mendapatkan layar penuh kembali."
+  },
   "modeNone": {
     "message": "Boost nonaktif"
   },

@@ -104,6 +104,9 @@
   "captureMsgConflict": {
     "message": "O aumento está ativo, mas a tela cheia não está disponível: esta página já cuida do próprio áudio (ou outro aplicativo faz isso), então a captura da aba é usada. Ative “Priorizar tela cheia” para manter a tela cheia (sem aumento)."
   },
+  "staleMsg": {
+    "message": "O aumento está ativo, mas a tela cheia não está disponível: a extensão foi atualizada enquanto esta aba estava aberta, e a versão anterior ainda está presa ao player. Recarregue a aba para recuperar a tela cheia."
+  },
   "modeNone": {
     "message": "Sem aumento"
   },

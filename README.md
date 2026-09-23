@@ -12,7 +12,7 @@ It's a *hybrid*: per tab it automatically picks the boosting method that preserv
 ## Features
 
 - **Boost _and_ reduce.** One centered slider: **1× = off** sits in the middle. Drag **right** to boost (up to **6×**), drag **left** to make it quieter (down to **0× = silent**). The whole left half is the quiet range with fine ~0.01 steps, so you can dial in something like `0.05×` - handy for ducking a backing track under a live instrument.
-- **Fullscreen preserved by default.** On YouTube and most HTML5 sites it hooks the page's own media element, so native fullscreen keeps working while boosting.
+- **Fullscreen preserved by default.** On YouTube, Twitch and most HTML5 sites it hooks the page's own media element, so native fullscreen keeps working while boosting.
 - **Per-tab memory.** Each tab remembers its own level while it's open (including across YouTube's autoplay/next-video). Closing the tab forgets it. Nothing is shared between tabs.
 - **Save a level for a site (opt-in).** Press *save* in the popup and every new tab you open on that site starts at that level (see [Usage](#usage)). Saved levels stay on your device and are forgotten with one click.
 - **Survives reload.** After an F5 the level re-applies automatically - no need to reopen the popup (see [Notes](#notes--limits) for the exceptions).
@@ -85,6 +85,7 @@ You can always install straight from source - no store needed (requires Chrome 1
 - **Loud, hot-mastered tracks** stop getting louder past ~2× with the limiter on - that's the limiter protecting your ears/headphones, not a bug. The upper range is headroom for quiet sources (a low podcast, an old upload). Turn the limiter off for raw gain.
 - **Reload auto-restore** is audible on its own on high-engagement sites like YouTube (Chrome's autoplay policy lets their audio resume without a click). On rarely-visited sites Chrome needs a click first: the level returns with your first click or key press on the page, or when you reopen the popup. Capture-mode tabs need the popup reopened. A level saved for a site lands in a new tab the same way: on its own on high-engagement sites, with the first click elsewhere, and on capture-mode sites when you open the popup.
 - **Browser pages** (`chrome://`, the Web Store, other extensions) can't be boosted and the popup says so.
+- **After an update**, a tab that was already open keeps the previous version attached to its player until the tab is reloaded (Chrome allows one such attachment per player). Meanwhile it is boosted through capture mode, and the popup says so: reload the tab to get fullscreen back.
 - Only **one capture per tab** exists in Chrome, so if another capture/booster extension already grabbed a tab, capture mode there will fail.
 
 ---
@@ -112,7 +113,7 @@ Missing yours, or spotted awkward wording? Adding or fixing a language is a sing
 
 ## Privacy
 
-This extension collects **no data** and uploads **nothing**. It stores only your per-tab settings (level, method in use, fullscreen preference, and which saved site the tab is on; forgotten when the tab closes), the levels you chose to save for sites (the site's host name and the level, until you forget them) and the limiter on/off preference, using Chrome's on-device storage.
+This extension collects **no data** and uploads **nothing**. It stores only your per-tab settings (level, method in use, fullscreen preference, and which saved site the tab is on; forgotten when the tab closes), the levels you chose to save for sites (the site's host name and the level, until you forget them), the limiter on/off preference and the time of the last install or update, using Chrome's on-device storage.
 
 It makes exactly one kind of network request: for **same-origin media URLs**, a `Range: bytes=0-0` request to that media file, to check whether the URL redirects to another host. That check is required because hooking cross-origin media would silence the tab permanently, and the redirect is invisible from the page. It runs when the extension is about to hook a media element, and ahead of time whenever it inspects a tab you have adjusted (opening the popup, moving the slider, re-applying after a reload or player swap): at most two media files per inspection and eight per page load, only for media that has already started loading. It goes to whichever origin serves that media (the site you're on, or an embedded player's own host), the response is discarded, media on other origins is never requested, and nothing is ever sent to us or to a third party. See [PRIVACY.md](PRIVACY.md).
 

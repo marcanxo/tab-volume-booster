@@ -119,6 +119,15 @@ async function getWorker(browser) {
 // Spy: wraps chrome.tabs.sendMessage inside the SW so every engage/stop/probe and its
 // RESPONSE is recorded. Also exposes helpers to run the worker's own entry points.
 async function installSpy(sw) {
+  // The worker target can be attachable before its realm is fully set up (even setTimeout can be
+  // missing for a moment, seen once as an uncaught ReferenceError that ended a whole run): retry
+  // the install until it takes.
+  for (let attempt = 0; ; attempt++) {
+    try { await installSpyOnce(sw); return; }
+    catch (e) { if (attempt >= 30) throw e; await sleep(100); }
+  }
+}
+async function installSpyOnce(sw) {
   await sw.evaluate(async () => {
     if (globalThis.__spy) { globalThis.__spy.log.length = 0; return; }
     // The worker target can be attachable before its chrome.* namespaces are wired up, so the
@@ -128,10 +137,13 @@ async function installSpy(sw) {
       await new Promise((r) => setTimeout(r, 50));
     }
     const log = [];
-    globalThis.__spy = { log, pings: 0 };
+    globalThis.__spy = { log, pings: 0, hooked: 0 };
     // Count inbound 'navigated' pings so a scenario can assert the anti-flood ceiling: the
     // gesture fast-path trades some of that ceiling away and nothing else would catch it.
-    chrome.runtime.onMessage.addListener((m) => { if (m && m.type === "navigated") globalThis.__spy.pings++; });
+    chrome.runtime.onMessage.addListener((m) => {
+      if (m && m.type === "navigated") globalThis.__spy.pings++;
+      if (m && m.type === "hooked") globalThis.__spy.hooked++;
+    });
     const orig = chrome.tabs.sendMessage.bind(chrome.tabs);
     chrome.tabs.sendMessage = (tabId, msg, opts) => {
       const entry = { t: Date.now(), tabId, frameId: opts && opts.frameId, cmd: msg && msg.cmd };
@@ -150,7 +162,14 @@ async function installSpy(sw) {
 
 const swSpyLog = (sw) => sw.evaluate(() => globalThis.__spy.log);
 const swClearLog = (sw) => sw.evaluate(() => { globalThis.__spy.log.length = 0; });
-const swClearSpy = (sw) => sw.evaluate(() => { globalThis.__spy.log.length = 0; globalThis.__spy.pings = 0; });
+const swClearSpy = (sw) => sw.evaluate(() => { globalThis.__spy.log.length = 0; globalThis.__spy.pings = 0; globalThis.__spy.hooked = 0; });
+// A tab by a fragment of its URL (several tabs on one origin: tabIdOf would find the first).
+async function tabIdByUrl(sw, fragment) {
+  return sw.evaluate(async (f) => {
+    const t = (await chrome.tabs.query({})).find((x) => (x.url || "").includes(f));
+    return t ? t.id : null;
+  }, fragment);
+}
 const swSetGain = (sw, tabId, gain) =>
   sw.evaluate((t, g) => serialized(t, () => setGain(t, g, true)), tabId, gain);
 const swGetMode = (sw, tabId) => sw.evaluate((t) => sget(`tabmode:${t}`), tabId);
@@ -226,10 +245,12 @@ async function clickInFrame(page, frame, id) {
 async function assertHookedInPage(ctx, page, id, label) {
   await sleep(1200); // a worker roundtrip would long since have shown up
   const pings = await ctx.sw.evaluate(() => globalThis.__spy.pings);
+  const reports = await ctx.sw.evaluate(() => globalThis.__spy.hooked);
   const engages = (await swSpyLog(ctx.sw)).filter((e) => e.cmd === "engage").length;
   if (!(await page.evaluate((i) => window.feed.isHooked(i), id)))
     return `${label}: the video was never hooked`;
   if (pings || engages) return `${label}: the boost needed the worker (${pings} pings, ${engages} engages)`;
+  if (reports) return `${label}: the in-page hook woke the worker (${reports} 'hooked' reports) although it tracks the frame already`;
   return true;
 }
 
@@ -652,16 +673,17 @@ const scenarios = {
       await page.evaluate((i) => window.feed.pause(i), a);
       const b = await page.evaluate(() => window.feed.add()); // muted autoplay, not hooked
       await sleep(2600);                                      // let the churn pass drain fully
-      await swClearLog(ctx.sw);
-      await ctx.sw.evaluate(() => { globalThis.__spy.pings = 0; });
+      await swClearSpy(ctx.sw);
       await clickVideo(page, b);
       await sleep(1200); // a worker roundtrip would long since have happened
       const pings = await ctx.sw.evaluate(() => globalThis.__spy.pings);
+      const reports = await ctx.sw.evaluate(() => globalThis.__spy.hooked);
       const engages = (await swSpyLog(ctx.sw)).filter((e) => e.cmd === "engage").length;
       const hooked = await page.evaluate((i) => window.feed.isHooked(i), b);
-      ctx.note(`${pings} pings, ${engages} engages`);
+      ctx.note(`${pings} pings, ${engages} engages, ${reports} hooked reports`);
       if (!hooked) return `the clicked video was never hooked - the pre-hook did not fire`;
       if (pings || engages) return `boost went through the worker (${pings} pings, ${engages} engages) instead of landing inside the gesture`;
+      if (reports) return `the pre-hook woke the worker (${reports} hooked reports) although it tracks the frame already`;
       return true;
     } finally { await page.close(); }
   },
@@ -1933,6 +1955,359 @@ const scenarios = {
     }
   },
 
+  // A tab that was open across an extension update keeps the PREVIOUS copy's one-shot hook on its
+  // player: the old world stands down, the element stays bound. The new world cannot hook it
+  // again and used to report 'already-hooked', a foreign conflict - so the popup told the user the
+  // page (or another app) handles its audio. Simulated: the page's main world hooks the player,
+  // which the extension's world cannot tell from a predecessor's hook, and the worker's install
+  // time is set after (an update happened) or before (a fresh document) the document was created.
+  async s52_stale_hook_is_not_a_conflict(ctx) {
+    const page = await newFeedPage(ctx.browser, ctx.port);
+    const orig = await ctx.sw.evaluate(() => installedAt());
+    const setSince = (v) => ctx.sw.evaluate(async (x) => { await lset(INSTALLED_KEY, x); installedAtCache = null; }, v);
+    let tabId = null;
+    try {
+      const id = await page.evaluate(() => window.feed.addAudible());
+      await sleep(300);
+      await page.evaluate((i) => {
+        const v = document.getElementById(i);
+        const ac = new AudioContext();
+        ac.createMediaElementSource(v).connect(ac.destination);
+        window.__predecessor = ac;
+      }, id);
+      tabId = await tabIdOf(ctx.sw, ctx.port);
+      // 1. installed after this document was created: the hook is our predecessor's leftover
+      await setSince(Date.now());
+      await swClearLog(ctx.sw);
+      const r1 = await swSetGain(ctx.sw, tabId, 3);
+      const e1 = (await swSpyLog(ctx.sw)).find((e) => e.cmd === "engage" && e.res && e.res.reason);
+      ctx.note(`after an update: ${JSON.stringify(e1 && e1.res)} -> ${JSON.stringify(r1)}`);
+      if (!e1 || e1.res.reason !== "stale-hook") return `BUG: the leftover is not recognized (${JSON.stringify(e1 && e1.res)})`;
+      if (r1.conflict || !r1.stale) return `BUG: the popup would blame the page: ${JSON.stringify(r1)}`;
+      // 2. non-vacuity: the same hook on a document newer than the install IS a foreign conflict
+      await setSince(1);
+      await ctx.sw.evaluate((t) => clearMode(t), tabId);
+      await swClearLog(ctx.sw);
+      const r2 = await swSetGain(ctx.sw, tabId, 3);
+      const e2 = (await swSpyLog(ctx.sw)).find((e) => e.cmd === "engage" && e.res && e.res.reason);
+      ctx.note(`fresh document: ${JSON.stringify(e2 && e2.res)} -> ${JSON.stringify(r2)}`);
+      if (!e2 || e2.res.reason !== "already-hooked" || !r2.conflict || r2.stale)
+        return `sabotage failed: a foreign hook on a fresh document is not reported as a conflict (${JSON.stringify(r2)})`;
+      return true;
+    } finally {
+      await setSince(orig);
+      if (tabId != null) await swSetGain(ctx.sw, tabId, 1).catch(() => {});
+      await page.close();
+    }
+  },
+
+  // Live-stream players feed their <video> through srcObject = MediaSourceHandle (MSE in a worker):
+  // no URL at all, so the probe used to call them unhookable ('no-src') and the tab went to capture -
+  // fullscreen lost while boosted, and a saved level arrived only once the popup was opened. MSE is
+  // CORS-clean by construction: such a player is hooked in-page now, with the boost measured
+  // through the hook. Then the saved-level half: a new tab gets the level with no popup at all.
+  async s53_mse_handle_player_in_page(ctx) {
+    const host = "127.0.0.1";
+    let page;
+    const openPlayer = async () => {
+      const p = await ctx.browser.newPage();
+      await p.goto(`http://127.0.0.1:${ctx.port}/?auto=msehandle`, { waitUntil: "load" });
+      await p.waitForFunction(() => {
+        const v = document.getElementById("msehandle");
+        return window.mseReady === true && !!v && !v.paused && v.readyState >= 2;
+      }, { timeout: 15000 });
+      return p;
+    };
+    try {
+      page = await openPlayer();
+      const tabId = await tabIdOf(ctx.sw, ctx.port);
+      const pm = await ctx.sw.evaluate((t) => predictMode(t), tabId);
+      if (pm.mode !== "element") return `BUG: the MediaSource-handle player is not taken in-page: ${JSON.stringify(pm)}`;
+      const r = await swSetGain(ctx.sw, tabId, 0.05);
+      const m = await measureTop(ctx.sw, tabId);
+      ctx.note(`setGain ${JSON.stringify(r)}, rms ${m && m.ok ? m.rms.toFixed(3) : JSON.stringify(m)}`);
+      if (r.mode !== "element" || !r.confirmed) return `BUG: no confirmed in-page boost on the handle player: ${JSON.stringify(r)}`;
+      if (!m || !m.ok || m.rms > 0.1) return `BUG: the handle player is not ducked (measure ${JSON.stringify(m)})`;
+      await swSetGain(ctx.sw, tabId, 1);
+      await page.close(); page = null;
+      // a saved level reaches such a player in a new tab on its own
+      await swSaveSite(ctx.sw, host, 0.05);
+      page = await openPlayer();
+      const t2 = await tabIdOf(ctx.sw, ctx.port);
+      const w = await waitMeasure(ctx.sw, t2, (x) => !!(x && x.ok && x.rms < 0.1), 10000);
+      ctx.note(`saved level in a new tab: ${w.m ? "ducked " + w.elapsed + "ms after the player started" : "not applied, last " + JSON.stringify(w.last)}`);
+      if (!w.m) return "BUG: the saved level did not reach the handle player without the popup";
+      return true;
+    } finally {
+      await swForgetSite(ctx.sw, host);
+      if (page) await page.close().catch(() => {});
+    }
+  },
+
+  // A level the page knows BEFORE its player starts. The worker pre-arms the top frame while its
+  // restore is still waiting for a player, so the frame takes the player in the 'play' event
+  // itself, not a probe cadence later: on a tab turned down, the difference between a silent
+  // start and a moment of full volume. Two players: one that starts within the restore's
+  // patience, one well after it (the frame stays armed past the give-up exit, and reports its
+  // hook so the worker tracks the frame without a probe). The tell: the worker's first engage on
+  // such a player finds it already hooked (the update path answers without `signal`), and the
+  // very first measure already sees the ducked level.
+  async s54_armed_frame_takes_player_at_play(ctx) {
+    const host = "127.0.0.1";
+    const check = async (after, label) => {
+      const page = await ctx.browser.newPage();
+      try {
+        await swClearLog(ctx.sw);
+        await page.goto(`http://127.0.0.1:${ctx.port}/?auto=late&after=${after}`, { waitUntil: "load" });
+        await page.waitForFunction(() => { const v = document.querySelector("video"); return !!v && !v.paused; }, { timeout: after + 5000 });
+        const id = await page.evaluate(() => document.querySelector("video").id);
+        const playedAt = await page.evaluate((i) => window.feed.playedAt(i), id);
+        const tabId = await tabIdOf(ctx.sw, ctx.port);
+        const m = await measureTop(ctx.sw, tabId);
+        await sleep(1500);
+        const first = (await swSpyLog(ctx.sw)).find((e) => e.cmd === "engage" && e.t >= playedAt - 50 && e.res && e.res.ok);
+        const mode = await swGetMode(ctx.sw, tabId);
+        ctx.note(`${label}: first measure rms ${m && m.ok ? m.rms.toFixed(3) : JSON.stringify(m)}, first engage ${first ? JSON.stringify(first.res) : "none"}, mode ${JSON.stringify(mode)}`);
+        if (!m || !m.ok || m.rms > 0.1) return `${label}: the player was not ducked when it started (measure ${JSON.stringify(m)})`;
+        if (first && "signal" in first.res) return `${label}: the worker's engage is what hooked the player: it played at native level until then`;
+        if (!mode || mode.mode !== "element" || mode.frameId !== 0) return `${label}: the worker does not track the frame's own hook (mode ${JSON.stringify(mode)})`;
+        return true;
+      } finally { await page.close().catch(() => {}); }
+    };
+    try {
+      await swSaveSite(ctx.sw, host, 0.05);
+      const a = await check(1500, "within the restore's patience");
+      if (a !== true) return a;
+      const b = await check(7500, "after the restore gave up");
+      if (b !== true) return b;
+      return true;
+    } finally { await swForgetSite(ctx.sw, host); }
+  },
+
+  // A player told to play BEFORE its stream is attached. Its 'play' finds nothing to hook, and a
+  // fresh element stays unpaused through the attachment, so no second 'play' ever comes: only
+  // 'playing' marks the real start. The stream arrives late here, after every restore pass has
+  // given up (the sourceless 'play' pinged one more), so nothing but the frame's own listeners can
+  // catch it: the one-in-twenty tab on a live-streaming site that never got its saved level until
+  // the popup opened. Now 'playing' takes the player in-page like 'play' does, on the still-armed
+  // top frame, so the level is in place when the sound starts.
+  async s55_playing_reveals_late_source(ctx) {
+    const host = "127.0.0.1";
+    let page;
+    try {
+      await swSaveSite(ctx.sw, host, 0.05);
+      await swClearLog(ctx.sw);
+      page = await ctx.browser.newPage();
+      await page.goto(`http://127.0.0.1:${ctx.port}/?auto=msehandle&order=playfirst&attach=16000`, { waitUntil: "load" });
+      await page.waitForFunction(() => window.mseReady === true && !!window.feed.playingAt("msehandle"), { timeout: 30000 });
+      const tabId = await tabIdOf(ctx.sw, ctx.port);
+      const m = await measureTop(ctx.sw, tabId);
+      const { playedAt, playingAt, hadSource } = await page.evaluate(() => ({
+        playedAt: window.feed.playedAt("msehandle"), playingAt: window.feed.playingAt("msehandle"), hadSource: window.feed.playHadSource("msehandle") }));
+      if (hadSource !== false || !(playedAt < playingAt)) return `setup failed: not a play-before-source start (hadSource=${hadSource}, play ${playedAt}, playing ${playingAt})`;
+      await sleep(1500);
+      const log = await swSpyLog(ctx.sw);
+      const late = log.find((e) => e.cmd === "engage" && e.t >= playingAt - 50 && e.res && e.res.ok);
+      const mode = await swGetMode(ctx.sw, tabId);
+      ctx.note(`'playing' ${playingAt - playedAt}ms after the sourceless 'play'; first measure rms ${m && m.ok ? m.rms.toFixed(3) : JSON.stringify(m)}; engage after it ${late ? JSON.stringify(late.res) : "none"}; mode ${JSON.stringify(mode)}`);
+      if (!m || !m.ok || m.rms > 0.1) return `BUG: the saved level never reached the player once its stream started (measure ${JSON.stringify(m)})`;
+      if (late && "signal" in late.res) return "BUG: the worker's probe is what hooked the player: the sound started at native level";
+      if (!mode || mode.mode !== "element" || mode.frameId !== 0) return `BUG: the frame's own hook is not tracked (mode ${JSON.stringify(mode)})`;
+      return true;
+    } finally {
+      await swForgetSite(ctx.sw, host);
+      if (page) await page.close().catch(() => {});
+    }
+  },
+
+  // Saving a level for a site in one tab must not touch another tab already on that site: the
+  // saved level is for tabs ARRIVING there. Tab A sets its own level while nothing is saved; tab B
+  // saves another; then A navigates within the site (pushState) - its own level must stay. Also:
+  // a save for a site the tab has left since the popup opened is refused.
+  async s56_save_leaves_other_tabs_alone(ctx) {
+    const host = "127.0.0.1";
+    let a, b;
+    try {
+      a = await ctx.browser.newPage();
+      await a.goto(`http://127.0.0.1:${ctx.port}/?auto=audible&tab=a`, { waitUntil: "load" });
+      await sleep(400);
+      const ta = await tabIdByUrl(ctx.sw, "tab=a");
+      const r = await swSetGain(ctx.sw, ta, 3);
+      if (r.mode !== "element") return `setup failed: ${JSON.stringify(r)}`;
+      b = await ctx.browser.newPage();
+      await b.goto(`http://127.0.0.1:${ctx.port}/?tab=b`, { waitUntil: "load" });
+      await sleep(300);
+      const tb = await tabIdByUrl(ctx.sw, "tab=b");
+      const s = await ctx.sw.evaluate((t, h) => siteSave(t, 0.05, h), tb, host);
+      if (s.saved !== 0.05) return `setup failed: save answered ${JSON.stringify(s)}`;
+      await a.evaluate(() => history.pushState(null, "", "/?auto=audible&tab=a&next=2"));
+      await sleep(1500);
+      const ga = await swGetGain(ctx.sw, ta);
+      ctx.note(`tab A after an in-site navigation: gain=${ga}`);
+      if (ga !== 3) return `BUG: saving in another tab replaced this tab's own level (gain ${ga}, expected 3)`;
+      // the popup names the site; a tab that is somewhere else by now is not saved for
+      const wrong = await ctx.sw.evaluate((t) => siteSave(t, 2, "elsewhere.example"), tb);
+      const kept = await swSavedLevel(ctx.sw, host);
+      if (wrong.host !== host || kept !== 0.05) return `BUG: a save named for another site went through (${JSON.stringify(wrong)}, stored ${kept})`;
+      return true;
+    } finally {
+      await swForgetSite(ctx.sw, host);
+      for (const p of [a, b]) if (p) await p.close().catch(() => {});
+    }
+  },
+
+  // The 'stale' state (the previous copy's leftover hook) belongs to the document that carried it.
+  // After the reload the popup asks for, the restore used to treat the tab as capture-bound: no
+  // pre-arm, a capture attempt on the fresh page, and the stale note carried onto it. Recorded
+  // here directly (the harness has no capture grant, so the state never survives on its own),
+  // then the page reloads with a player that starts a beat after the load.
+  async s57_stale_state_ends_with_reload(ctx) {
+    const page = await ctx.browser.newPage();
+    try {
+      await page.goto(`http://127.0.0.1:${ctx.port}/?auto=late&after=1500`, { waitUntil: "load" });
+      await page.waitForFunction(() => { const v = document.querySelector("video"); return !!v && !v.paused; }, { timeout: 8000 });
+      const tabId = await tabIdOf(ctx.sw, ctx.port);
+      const r = await swSetGain(ctx.sw, tabId, 0.05);
+      if (r.mode !== "element") return `setup failed: ${JSON.stringify(r)}`;
+      await ctx.sw.evaluate((t) => setMode(t, { mode: "capture", conflict: false, stale: true }), tabId);
+      await ctx.sw.evaluate(() => {
+        const orig = chrome.tabCapture.getMediaStreamId.bind(chrome.tabCapture);
+        globalThis.__s57 = { orig, calls: 0 };
+        chrome.tabCapture.getMediaStreamId = (...a) => { globalThis.__s57.calls++; return orig(...a); };
+      });
+      await swClearLog(ctx.sw);
+      await page.reload({ waitUntil: "load" });
+      await page.waitForFunction(() => { const v = document.querySelector("video"); return !!v && !v.paused; }, { timeout: 8000 });
+      const playedAt = await page.evaluate(() => window.feed.playedAt(document.querySelector("video").id));
+      const m = await measureTop(ctx.sw, tabId);
+      await sleep(1500);
+      const calls = await ctx.sw.evaluate(() => globalThis.__s57.calls);
+      const first = (await swSpyLog(ctx.sw)).find((e) => e.cmd === "engage" && e.t >= playedAt - 50 && e.res && e.res.ok);
+      const mode = await swGetMode(ctx.sw, tabId);
+      ctx.note(`capture attempts ${calls}, first measure ${m && m.ok ? m.rms.toFixed(3) : JSON.stringify(m)}, mode ${JSON.stringify(mode)}`);
+      if (calls) return `BUG: the reloaded page was treated as capture-bound (${calls} capture attempt(s))`;
+      if (!m || !m.ok || m.rms > 0.1) return `BUG: the reloaded page's player was not taken at its start (measure ${JSON.stringify(m)})`;
+      if (first && "signal" in first.res) return "BUG: the worker's engage hooked the player, not the pre-armed frame";
+      if (!mode || mode.mode !== "element" || mode.stale) return `BUG: the tab did not come back in plain element mode (${JSON.stringify(mode)})`;
+      return true;
+    } finally {
+      await ctx.sw.evaluate(() => {
+        if (!globalThis.__s57) return;
+        chrome.tabCapture.getMediaStreamId = globalThis.__s57.orig;
+        delete globalThis.__s57;
+      });
+      await page.close().catch(() => {});
+    }
+  },
+
+  // A frame armed at a level the tab no longer has - a release's stop overtook the restore's arm -
+  // must not keep a hook it takes afterwards. Simulated: the frame is armed while the tab has no
+  // level, then a player starts. The worker unwinds that hook on the frame's report and records no
+  // mode, instead of a boost the popup shows as 1x.
+  async s58_hook_without_level_is_undone(ctx) {
+    const page = await newFeedPage(ctx.browser, ctx.port);
+    try {
+      const tabId = await tabIdOf(ctx.sw, ctx.port);
+      const gain = await swGetGain(ctx.sw, tabId);
+      if (gain !== undefined) return `setup failed: the tab already has a level (${gain})`;
+      await ctx.sw.evaluate((t) => ensureContentScript(t), tabId);
+      await ctx.sw.evaluate((t) => toFrame(t, 0, { cmd: "arm", gain: 0.05, useLimiter: true }), tabId);
+      await page.evaluate(() => window.feed.addAudible());
+      await sleep(1200);
+      const m = await measureTop(ctx.sw, tabId);
+      const mode = await swGetMode(ctx.sw, tabId);
+      ctx.note(`measure ${m && m.ok ? m.rms.toFixed(3) : JSON.stringify(m)}, mode ${JSON.stringify(mode)}`);
+      if (mode) return `BUG: a hook taken without a level was recorded (${JSON.stringify(mode)})`;
+      if (m && m.ok && m.rms < 0.1) return `BUG: the player stays ducked at a level the tab no longer has (rms ${m.rms.toFixed(3)})`;
+      return true;
+    } finally { await page.close(); }
+  },
+
+  // A restore that moves the player from one sub-frame to another. The top frame was pre-armed
+  // while the loop waited; parking the old player's frame must not skip parking the top frame, or
+  // it stays armed next to the new one - untracked, and able to hook at a level the slider no
+  // longer reaches.
+  async s59_retarget_parks_armed_top(ctx) {
+    const page = await ctx.browser.newPage();
+    try {
+      await page.goto(`http://127.0.0.1:${ctx.port}/frame-same-origin.html`, { waitUntil: "load" });
+      await sleep(1000);
+      const tabId = await tabIdOf(ctx.sw, ctx.port);
+      const r = await swSetGain(ctx.sw, tabId, 0.05);
+      const cur = await swGetMode(ctx.sw, tabId);
+      if (r.mode !== "element" || !cur || cur.frameId === 0) return `setup failed: player not in a sub-frame (${JSON.stringify(cur)})`;
+      // the player "used to be" in another sub-frame
+      await ctx.sw.evaluate((t) => setMode(t, { mode: "element", frameId: 999999 }), tabId);
+      await swClearLog(ctx.sw);
+      await ctx.sw.evaluate((t) => kickRestore(t, false), tabId);
+      for (let i = 0; i < 100 && (await ctx.sw.evaluate((t) => restoring.has(t), tabId)); i++) await sleep(100);
+      // Judged on the FIRST pass only (entries carry their send time): between the pass's arm and
+      // its engage on the new frame, the top frame must be parked. A later re-run with the player
+      // in the same sub-frame parks it either way and would hide the bug.
+      const log = await swSpyLog(ctx.sw);
+      const firstArm = log.filter((e) => e.cmd === "arm" && e.frameId === 0).sort((x, y) => x.t - y.t)[0];
+      const firstEngage = firstArm && log.filter((e) => e.cmd === "engage" && e.frameId === cur.frameId && e.t >= firstArm.t).sort((x, y) => x.t - y.t)[0];
+      const oldStop = log.find((e) => e.cmd === "stop" && e.frameId === 999999);
+      const topStop = firstEngage && log.find((e) => e.cmd === "stop" && e.frameId === 0 && e.t >= firstArm.t && e.t <= firstEngage.t);
+      ctx.note(`armed top: ${!!firstArm}, old frame parked: ${!!oldStop}, top frame parked before the engage: ${!!topStop}`);
+      if (!firstArm || !firstEngage || !oldStop) return `setup failed: arm ${!!firstArm}, engage ${!!firstEngage}, old-frame stop ${!!oldStop}`;
+      if (!topStop) return "BUG: the pre-armed top frame stays armed next to the player's new frame";
+      return true;
+    } finally { await page.close(); }
+  },
+
+  // The give-up at the end of a restore that found no player. If the player starts during the
+  // last probe, the armed top frame takes it on the spot and reports it; the give-up used to
+  // disarm every frame regardless and unwind that fresh hook to 1x. The last probe is wrapped so
+  // the page starts its player right then; the hook must keep its level.
+  async s60_giveup_keeps_fresh_hook(ctx) {
+    const page = await newFeedPage(ctx.browser, ctx.port);
+    const tabId = await tabIdOf(ctx.sw, ctx.port);
+    try {
+      await swSetGain(ctx.sw, tabId, 0.05); // no media yet: capture fails here, the level stays
+      await ctx.sw.evaluate((t) => clearMode(t), tabId);
+      // Only the pass under test may run: the new player's churn ping would otherwise queue a
+      // re-run, whose engage re-applies the level and hides an unwound hook. (A player that
+      // starts without touching the DOM - a stream attached to an element already there - gets
+      // no such second chance, which is the case this guards.)
+      await ctx.sw.evaluate((t) => {
+        const origPredict = predictMode;
+        const origKick = kickRestore;
+        globalThis.__s60 = { origPredict, origKick, calls: 0, kicks: 0 };
+        kickRestore = (id, d) => (id === t && globalThis.__s60.kicks++ > 0) ? Promise.resolve() : origKick(id, d);
+        predictMode = async (id) => {
+          const res = await origPredict(id);
+          if (id === t && ++globalThis.__s60.calls === RESTORE_ATTEMPTS) {
+            await chrome.scripting.executeScript({ target: { tabId: id }, world: "MAIN", func: () => window.feed.addAudible() });
+            await new Promise((r) => setTimeout(r, 700)); // the frame hooks at 'play' and reports it
+          }
+          return res;
+        };
+      }, tabId);
+      await ctx.sw.evaluate((t) => kickRestore(t, false), tabId);
+      for (let i = 0; i < 150 && (await ctx.sw.evaluate((t) => restoring.has(t), tabId)); i++) await sleep(100);
+      const calls = await ctx.sw.evaluate(() => globalThis.__s60.calls);
+      await sleep(300);
+      const m = await measureTop(ctx.sw, tabId);
+      const mode = await swGetMode(ctx.sw, tabId);
+      ctx.note(`probes ${calls}, measure ${m && m.ok ? m.rms.toFixed(3) : JSON.stringify(m)}, mode ${JSON.stringify(mode)}`);
+      if (calls < 8) return `setup failed: the restore ended after ${calls} probes`;
+      if (!m || !m.ok || m.rms > 0.1) return `BUG: the give-up unwound the hook the frame took during the last probe (measure ${JSON.stringify(m)})`;
+      if (!mode || mode.mode !== "element") return `BUG: the frame's hook is not tracked after the give-up (${JSON.stringify(mode)})`;
+      return true;
+    } finally {
+      await ctx.sw.evaluate((t) => {
+        if (!globalThis.__s60) return;
+        predictMode = globalThis.__s60.origPredict;
+        kickRestore = globalThis.__s60.origKick;
+        pendingRekick.delete(t);
+        delete globalThis.__s60;
+      }, tabId);
+      await swSetGain(ctx.sw, tabId, 1).catch(() => {});
+      await page.close();
+    }
+  },
+
   // Release must reach the swapped-in hook: boost, swap, click (boost lands), then 1.0x.
   async s8_release_after_swap(ctx) {
     const page = await newFeedPage(ctx.browser, ctx.port);
@@ -1958,8 +2333,29 @@ const scenarios = {
 // The suite's browser runs with the autoplay policy switched OFF (media plays unattended). s41
 // needs the real policy in a fresh profile: puppeteer gives every launch its own temp profile, so
 // that browser has never heard audio from any origin.
+// Where the headed test window goes. With more than one monitor it opens on one that is NOT the
+// primary, out of the way of whatever is being watched there (TVB_WINDOW_POS=x,y overrides,
+// TVB_WINDOW_POS=main keeps it on the primary). Windows only; elsewhere Chrome decides.
+let windowPosition;
+function testWindowPosition() {
+  if (windowPosition !== undefined) return windowPosition;
+  windowPosition = null;
+  const env = process.env.TVB_WINDOW_POS;
+  if (env === "main") return null;
+  if (env && /^-?\d+,-?\d+$/.test(env)) return (windowPosition = env);
+  if (process.platform !== "win32") return null;
+  try {
+    const out = require("child_process").execFileSync("powershell", ["-NoProfile", "-Command",
+      "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Screen]::AllScreens | Where-Object { -not $_.Primary } | Select-Object -First 1 | ForEach-Object { '{0},{1}' -f ($_.Bounds.X + 40), ($_.Bounds.Y + 40) }"],
+      { encoding: "utf8", timeout: 10000 }).trim();
+    if (/^-?\d+,-?\d+$/.test(out)) windowPosition = out;
+  } catch (_) { /* no PowerShell, no second screen: Chrome decides */ }
+  return windowPosition;
+}
+
 function launchChrome(opts) {
   const o = opts || {};
+  const pos = testWindowPosition();
   return puppeteer.launch({
     executablePath: CHROME,
     headless: false, // extension + media playback: headed is the reliable path; window is small and brief
@@ -1969,6 +2365,7 @@ function launchChrome(opts) {
       ...(o.autoplayPolicyOff === false ? [] : ["--autoplay-policy=no-user-gesture-required"]),
       "--mute-audio", // audio still flows through WebAudio graphs; just don't blast the speakers
       "--window-size=800,600",
+      ...(pos ? [`--window-position=${pos}`] : []),
       "--no-first-run", "--no-default-browser-check",
     ],
   });

@@ -104,6 +104,9 @@
   "captureMsgConflict": {
     "message": "Ses artırma açık, ancak tam ekran kullanılamıyor: bu sayfa sesini zaten kendisi işliyor (ya da başka bir uygulama işliyor), bu yüzden sekme yakalama kullanılıyor. Bunun yerine tam ekranı korumak için “Tam ekranı tercih et” seçeneğini açın (ses artırma olmadan)."
   },
+  "staleMsg": {
+    "message": "Ses artırma açık, ancak tam ekran kullanılamıyor: bu sekme açıkken uzantı güncellendi ve önceki sürümü oynatıcıyı hâlâ tutuyor. Tam ekranı geri almak için sekmeyi yeniden yükleyin."
+  },
   "modeNone": {
     "message": "Ses artırılmıyor"
   },

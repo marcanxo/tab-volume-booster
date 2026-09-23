@@ -47,6 +47,7 @@
         v.volume = 1;
         if (v.paused) v.play();
       });
+      v.addEventListener("play", () => { if (!v.__playedAt) v.__playedAt = Date.now(); });
       post.appendChild(v);
       if (o.paused) v.autoplay = false; // makePost normally autoplays at the bottom; see there
       // Real feeds rarely put the click handler on the <video>: a transparent catcher sits on
@@ -73,6 +74,11 @@
       add() { return makePost({}).id; },
       // add an audibly-playing post
       addAudible() { return makePost({ muted: false }).id; },
+      // when the video's first 'play' fired (Date.now()), or null
+      playedAt(id) { const v = find(id); return (v && v.__playedAt) || null; },
+      // when its first 'playing' fired, and whether a source was attached at its first 'play'
+      playingAt(id) { const v = find(id); return (v && v.__playingAt) || null; },
+      playHadSource(id) { const v = find(id); return v ? v.__playHadSource : null; },
       // unmuted from the start but PAUSED - the article-page second video. Pressing play on it
       // later changes neither volume nor the DOM: the play event is the only signal there is.
       addPaused() { return makePost({ muted: false, paused: true }).id; },
@@ -235,9 +241,58 @@
     // thing the autoplay-policy scenario has to keep absent) or that load this feed in a frame.
     if (new URLSearchParams(location.search).get("auto") === "audible") window.feed.addAudible();
     // a player that attaches well after the load, like a slow site's
-    if (new URLSearchParams(location.search).get("auto") === "late") setTimeout(() => window.feed.addAudible(), 1500);
+    if (new URLSearchParams(location.search).get("auto") === "late") setTimeout(() => window.feed.addAudible(), +new URLSearchParams(location.search).get("after") || 1500);
     // a live-stream style player: plays through srcObject, no URL anywhere (live-stream players
     // hand the element a MediaSource handle; a stream is the stand-in the fixture can build)
+    // a live-stream player the way such sites build one: MSE in a dedicated worker, handed to the
+    // element as srcObject = MediaSourceHandle - no URL anywhere. The media is a few seconds of
+    // WebM recorded right here (tone + canvas), appended over and over in sequence mode.
+    if (new URLSearchParams(location.search).get("auto") === "msehandle") {
+      (async () => {
+        const mime = 'video/webm;codecs="vp8,opus"';
+        const ac = new AudioContext();
+        const osc = ac.createOscillator();
+        const dest = ac.createMediaStreamDestination();
+        osc.connect(dest);
+        osc.start();
+        const canvas = document.createElement("canvas");
+        canvas.width = 320; canvas.height = 180;
+        const g2d = canvas.getContext("2d");
+        const paint = setInterval(() => { g2d.fillStyle = "#" + Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, "0"); g2d.fillRect(0, 0, 320, 180); }, 40);
+        const rec = new MediaRecorder(new MediaStream([...canvas.captureStream(25).getVideoTracks(), ...dest.stream.getAudioTracks()]), { mimeType: mime });
+        const chunks = [];
+        rec.ondataavailable = (e) => chunks.push(e.data);
+        rec.start();
+        await new Promise((r) => setTimeout(r, 2000));
+        rec.stop();
+        await new Promise((r) => { rec.onstop = r; });
+        clearInterval(paint); osc.stop(); await ac.close();
+        const data = await new Blob(chunks, { type: mime }).arrayBuffer();
+        const workerSrc = "onmessage = (e) => { const data = e.data; const ms = new MediaSource(); postMessage({ handle: ms.handle }, [ms.handle]);" +
+          " ms.addEventListener('sourceopen', () => { const sb = ms.addSourceBuffer(" + JSON.stringify(mime) + "); sb.mode = 'sequence'; let n = 0;" +
+          " const push = () => { if (n++ < 20) sb.appendBuffer(data); }; sb.addEventListener('updateend', push); push(); }); };";
+        const w = new Worker(URL.createObjectURL(new Blob([workerSrc], { type: "text/javascript" })));
+        const handle = await new Promise((r) => { w.onmessage = (e) => r(e.data.handle); w.postMessage(data, [data]); });
+        const v = document.createElement("video");
+        v.id = "msehandle";
+        v.style.cssText = "width:560px;height:315px;display:block";
+        v.addEventListener("play", () => { if (!v.__playedAt) { v.__playedAt = Date.now(); v.__playHadSource = !!v.srcObject; } });
+        v.addEventListener("playing", () => { if (!v.__playingAt) v.__playingAt = Date.now(); });
+        document.getElementById("feed").appendChild(v);
+        const q = new URLSearchParams(location.search);
+        if (q.get("order") === "playfirst") {
+          // told to play before the stream exists; the stream arrives 'attach' ms later. A fresh
+          // element stays unpaused through the attachment: no second 'play', only 'playing'.
+          v.play().catch(() => {});
+          await new Promise((r) => setTimeout(r, +q.get("attach") || 300));
+          v.srcObject = handle;
+        } else {
+          v.srcObject = handle;
+          v.play().catch(() => {});
+        }
+        window.mseReady = true;
+      })();
+    }
     if (new URLSearchParams(location.search).get("auto") === "stream") {
       const ac = new AudioContext();
       const osc = ac.createOscillator();

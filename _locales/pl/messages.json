@@ -104,6 +104,9 @@
   "captureMsgConflict": {
     "message": "Wzmocnienie działa, ale pełny ekran nie: ta strona sama obsługuje swój dźwięk (albo robi to inna aplikacja), więc używane jest przechwytywanie karty. Włącz „Preferuj pełny ekran”, aby zamiast tego zachować pełny ekran (bez wzmocnienia)."
   },
+  "staleMsg": {
+    "message": "Wzmocnienie działa, ale pełny ekran nie: rozszerzenie zostało zaktualizowane, gdy ta karta była otwarta, a jego poprzednia wersja wciąż trzyma odtwarzacz. Odśwież kartę, aby odzyskać pełny ekran."
+  },
   "modeNone": {
     "message": "Bez wzmocnienia"
   },

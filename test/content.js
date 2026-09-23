@@ -453,30 +453,21 @@
   // play on a second article video (unmuted from the start, just paused) changes neither volume
   // nor the DOM, so without this listener no signal exists at all and the boost simply never
   // arrives. Same treatment: take it in-page when possible, ping otherwise.
-  // One blind spot remains: a player told to play BEFORE its stream is attached. Its 'play'
-  // fires with nothing to hook, and a fresh element stays unpaused through the attachment, so no
-  // second 'play' ever comes - only 'playing' marks the real start (measured: live-stream players
-  // do this). So 'playing' is taken as the missed 'play' for exactly those elements, and for no
-  // other: every player with a source at 'play' was handled there, and a second signal for it
-  // would only run the restore again (a churn ping per muted autoplay clip, in the worst case).
-  const sourcelessPlay = new WeakSet();
-  const onPlay = (e, late) => {
+  // 'playing' as well: a player told to play BEFORE its stream is attached fires 'play' with
+  // nothing to hook yet, and a fresh element stays unpaused through the attachment, so no second
+  // 'play' ever comes - 'playing' alone marks the real start (measured: live-stream players do
+  // this). Repeats after a stall on the hooked element itself return at the first check.
+  const onPlay = (e) => {
     if (checkOrphaned()) return;
     const el = e.target;
     if (!el || el.tagName !== "VIDEO" && el.tagName !== "AUDIO") return;
     if (el === S.el) return;
-    if (late) {
-      if (!sourcelessPlay.has(el)) return;
-      sourcelessPlay.delete(el);
-    } else if (!(el.srcObject || el.currentSrc || el.src)) {
-      sourcelessPlay.add(el);
-    }
     const audible = !el.muted && el.volume > 0;
     if (audible && autoHook(el)) return;
     pingNavigated(audible);
   };
-  document.addEventListener("play", (e) => onPlay(e, false), true);
-  document.addEventListener("playing", (e) => onPlay(e, true), true);
+  document.addEventListener("play", onPlay, true);
+  document.addEventListener("playing", onPlay, true);
   // Orphan standdown must not depend on the USER doing something: after an extension update,
   // the dangerous stacking path (new popup re-boost -> new world refused -> capture ON TOP of
   // this world's stale element gain) involves zero in-page events. timeupdate fires several
@@ -605,14 +596,10 @@
     applyLimiter(armedLimiter, true);
     S.engaged = true;
     watchElement(el);
-    // Tell the worker which frame holds the hook now - only where it pre-armed this frame
-    // ('arm'): it records the frame, so a later retarget or release reaches this hook like any
-    // other. A frame armed by an engage is tracked already, and waking the worker for every
-    // click or self-unmute there would be pure overhead.
-    if (armedByArm) {
-      armedByArm = false;
-      try { chrome.runtime.sendMessage({ type: "hooked" }); } catch (_) {}
-    }
+    // Tell the worker which frame holds the hook now. Redundant where it armed this frame by an
+    // engage (it tracks it already), essential where it only pre-armed it: the worker records
+    // the frame, so a later retarget or release reaches this hook like any other.
+    try { chrome.runtime.sendMessage({ type: "hooked" }); } catch (_) {}
     return true;
   }
 
@@ -623,12 +610,8 @@
   // is proven here, once per document: where the autoplay policy refuses it, the first gesture
   // retries through the worker as usual, and the ordinary path serves everything else.
   let armCtxTried = false;
-  // Armed by 'arm', not by an engage: only then is a hook this frame takes news to the worker.
-  // Cleared by the next engage (the worker tracks the frame from there) and by stop().
-  let armedByArm = false;
   async function arm(gain, useLimiter) {
     armedGain = gain;
-    armedByArm = true;
     armedLimiter = useLimiter !== false;
     if (hotCtx && hotCtx.state === "running") return { ok: true, running: true };
     if (armCtxTried) return { ok: true, running: false };
@@ -873,7 +856,6 @@
   const unwind = (g) => setLevel(g, 1, false);
   function stop() {
     armedGain = null; // this frame is no longer the tab's boosted one → no pre-hooking on its own
-    armedByArm = false;
     // Parked graphs hold the tab's level now, so a release has to reach them too: otherwise an
     // element that resumes later would still be boosted while the popup reads 1.0×.
     for (const g of retired) unwind(g);
@@ -968,7 +950,7 @@
           // it is the tab's element-mode frame, and this is the level. Only an armed frame may
           // hook on its own - a frame the worker has since routed to capture must not stack an
           // element hook underneath the capture gain (that would be double volume).
-          if (res && res.ok) { armedGain = msg.gain; armedLimiter = msg.useLimiter !== false; armedByArm = false; }
+          if (res && res.ok) { armedGain = msg.gain; armedLimiter = msg.useLimiter !== false; }
           sendResponse(res);
         })
         .catch(() => { try { sendResponse({ ok: false, reason: "error" }); } catch (_) {} });

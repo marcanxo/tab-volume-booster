@@ -104,6 +104,9 @@
   "captureMsgConflict": {
     "message": "La amplificación está activa, pero la pantalla completa no está disponible: esta página ya gestiona su propio audio (o lo hace otra aplicación), así que se usa la captura de pestaña. Activa «Priorizar pantalla completa» para conservar la pantalla completa (sin amplificar)."
   },
+  "staleMsg": {
+    "message": "La amplificación está activa, pero la pantalla completa no está disponible: la extensión se actualizó mientras esta pestaña estaba abierta y su versión anterior aún retiene el reproductor. Recarga la pestaña para recuperar la pantalla completa."
+  },
   "modeNone": {
     "message": "Sin amplificar"
   },

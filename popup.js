@@ -149,7 +149,7 @@ function renderSite() {
   els.reset.title = t(siteSaved != null ? "resetTitleSite" : "resetTitle"); // reset forgets the saved level too
 }
 
-function showMode(mode, conflict, fsPref) {
+function showMode(mode, conflict, fsPref, stale) {
   paused = (mode === "paused");
   els.body.classList.toggle("paused-view", paused);
 
@@ -158,8 +158,11 @@ function showMode(mode, conflict, fsPref) {
   // (otherwise a tab whose conflict flag was lost would be stuck un-boostable with no UI).
   const showConflict = !!conflict && (mode === "paused" || mode === "capture");
   const showFsRow = paused || showConflict;
+  // Our own previous copy still holding the player (the tab was open across an update) gets its
+  // own explanation and no fullscreen toggle: the page processes nothing, a reload fixes it.
+  const showStale = !!stale && !conflict && mode === "capture";
   els.fsRow.style.display = showFsRow ? "flex" : "none";
-  els.conflictMsg.style.display = showFsRow ? "block" : "none";
+  els.conflictMsg.style.display = showFsRow || showStale ? "block" : "none";
   if (showFsRow) els.fsToggle.setAttribute("aria-checked", String(!!fsPref));
 
   if (mode === "element") {
@@ -174,8 +177,9 @@ function showMode(mode, conflict, fsPref) {
   } else if (mode === "capture") {
     els.mode.dataset.state = "capture";
     els.modeText.textContent = conflict ? t("modeCaptureConflict") : t("modeCapture");
-    els.mode.title = conflict ? t("modeCaptureTitleConflict") : t("modeCaptureTitle");
+    els.mode.title = conflict ? t("modeCaptureTitleConflict") : showStale ? t("staleMsg") : t("modeCaptureTitle");
     if (conflict) els.conflictMsg.textContent = t("captureMsgConflict");
+    else if (showStale) els.conflictMsg.textContent = t("staleMsg");
   } else if (mode === "none") {
     els.mode.dataset.state = "";          // drop the green/amber styling back to muted
     els.modeText.textContent = t("modeNone");
@@ -188,7 +192,7 @@ function showMode(mode, conflict, fsPref) {
 function pushGain(gain) {
   chrome.runtime.sendMessage({ type: "setGain", tabId: tab.id, gain, useLimiter }, (res) => {
     if (!res || !res.mode) return;
-    showMode(res.mode, res.conflict, fsPriority);
+    showMode(res.mode, res.conflict, fsPriority, res.stale);
     // Apply FAILED (e.g. capture grant revoked): the stored target stays on the slider, but
     // nothing is boosting - dim the readout like the paused view so the big hot number
     // doesn't claim an active boost. showMode() above already reset the class for successes.
@@ -262,7 +266,7 @@ async function init() {
     els.fsToggle.setAttribute("aria-checked", String(fsPriority));
     chrome.runtime.sendMessage({ type: "setFsPriority", tabId: tab.id, value: fsPriority }, (res) => {
       if (!res || !res.mode) return;
-      showMode(res.mode, res.conflict, fsPriority);
+      showMode(res.mode, res.conflict, fsPriority, res.stale);
       if (res.failed === true) els.body.classList.add("paused-view"); // same honest dim as pushGain
     });
   });
@@ -276,11 +280,17 @@ async function init() {
     if (!action) return;
     siteTouched = true;
     const level = gainFromPos(parseFloat(els.slider.value));
+    const before = siteSaved;
     siteSaved = action === "save" ? level : null;
     renderSite();
-    const msg = action === "save" ? { type: "siteSave", tabId: tab.id, level } : { type: "siteForget", tabId: tab.id };
+    const msg = action === "save"
+      ? { type: "siteSave", tabId: tab.id, level, host: siteHost }
+      : { type: "siteForget", tabId: tab.id, host: siteHost };
     chrome.runtime.sendMessage(msg, (res) => {
-      if (res && "saved" in res) { siteSaved = res.saved; renderSite(); }
+      // The tab moved on to another site while the popup was open: the worker refused, and the
+      // row goes back to what it showed for the site it names.
+      if (!res || res.host !== siteHost) { siteSaved = before; renderSite(); return; }
+      if ("saved" in res) { siteSaved = res.saved; renderSite(); }
     });
   });
 
@@ -291,7 +301,7 @@ async function init() {
     els.slider.value = posFromGain(UNITY);   // snap the thumb to center (1×)
     render(UNITY);
     pushGain(UNITY);                          // setGain(1.0) → release → "Not boosting"
-    chrome.runtime.sendMessage({ type: "siteForget", tabId: tab.id }, () => {});
+    chrome.runtime.sendMessage({ type: "siteForget", tabId: tab.id, host: siteHost }, () => {});
   });
 
   // Non-destructive predict + restore (worker probes the page and returns mode + saved level).
@@ -308,7 +318,7 @@ async function init() {
     els.slider.value = posFromGain(gain);
     render(gain);
   }
-  showMode(prep.mode, prep.conflict, fsPriority);
+  showMode(prep.mode, prep.conflict, fsPriority, prep.stale);
 
   // Re-apply on open (restores the level after a reload; harmless nudge if already running).
   // Skip when the user already dragged: their push is newer than the stored level.
@@ -316,13 +326,17 @@ async function init() {
   // from here could commit a premature "capture" before the player has loaded. The worker answers
   // instead once that pass has settled: with the mode it confirmed, or with its own apply where
   // the restore could not apply the level (a capture needs this popup to have been opened).
-  if (!isUnity(gain) && !userTouched) {
-    if (!prep.restoring) pushGain(gain);
-    else chrome.runtime.sendMessage({ type: "afterRestore", tabId: tab.id }, (res) => {
+  // Mid-restore the popup waits for the settled answer even at 1x: the level may have been dropped
+  // while the pass was running, and the pill would otherwise keep "Checking…" for good.
+  if (userTouched) return;
+  if (prep.restoring) {
+    chrome.runtime.sendMessage({ type: "afterRestore", tabId: tab.id }, (res) => {
       if (!res || !res.mode || userTouched) return; // a drag meanwhile is newer: its own answer shows
-      showMode(res.mode, res.conflict, fsPriority);
+      showMode(res.mode, res.conflict, fsPriority, res.stale);
       if (res.failed === true) els.body.classList.add("paused-view"); // same honest dim as pushGain
     });
+  } else if (!isUnity(gain)) {
+    pushGain(gain);
   }
 }
 

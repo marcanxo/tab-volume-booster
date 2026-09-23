@@ -104,6 +104,9 @@
   "captureMsgConflict": {
     "message": "Il boost è attivo, ma lo schermo intero no: questa pagina gestisce già il proprio audio (o lo fa un'altra app), quindi si usa la cattura della scheda. Attiva “Preferisci schermo intero” per mantenere lo schermo intero (senza boost)."
   },
+  "staleMsg": {
+    "message": "Il boost è attivo, ma lo schermo intero no: l'estensione è stata aggiornata mentre questa scheda era aperta e la sua versione precedente tiene ancora il player. Ricarica la scheda per riavere lo schermo intero."
+  },
   "modeNone": {
     "message": "Boost non attivo"
   },

@@ -1,6 +1,6 @@
 # Privacy Policy - Tab Volume Booster
 
-_Last updated: 2026-09-23_
+_Last updated: 2026-09-24_
 
 **Tab Volume Booster does not collect, transmit, share, or sell any personal data.** The few
 settings it keeps, listed below, stay on your device.
@@ -18,6 +18,8 @@ processing happens locally, in real time, on your device.
   `youtube.com`) and the level. Kept in Chrome's `local` storage until you press "forget" or
   "reset" on that site.
 - **Limiter on/off preference** - kept in Chrome's `local` storage.
+- **When the extension was last installed or updated** - one timestamp in Chrome's `local`
+  storage, used only to recognize tabs that were already open at that moment.
 
 That's it. These settings never leave your browser, and they are used only to apply the volume
 levels you choose. The extension's use of this information complies with the Chrome Web Store

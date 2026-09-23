@@ -3,6 +3,32 @@
 What changed in each release, in plain terms. Versions match the ones published on the
 [Chrome Web Store](https://chromewebstore.google.com/detail/lcbedgoeigfomodfdiepidklaoplonii).
 
+## 1.2.1 - 2026-09-24
+
+The first Chrome Web Store release of the 1.2 line: it includes everything listed under 1.2.0.
+
+- **No more false "conflict" after an update.** A tab that was open while the extension updated
+  still has the previous version attached to its player, and Chrome allows only one such
+  attachment per player until the page reloads. The popup blamed the page for this ("already
+  handles its own audio, or another app does"). It now says what actually happened: the boost
+  runs through tab capture for now, and reloading the tab brings fullscreen back.
+- **Live streams on sites like Twitch are adjusted in-page.** Their players take the stream from
+  a media handle instead of a file address, which the extension treated as out of reach, so it
+  fell back to tab capture. Such players are safe to adjust in-page: fullscreen now keeps working
+  while boosted, and a level saved for the site reaches a new tab without opening the popup
+  (with your first click on the page if Chrome has not yet let the site play sound).
+- **Saving a level no longer changes other open tabs.** A tab that was already on the site when
+  you saved a level for it in another tab now keeps its own level, as intended; the saved level is
+  for tabs that arrive on the site afterwards. Before, its next video or reload switched it to the
+  saved level.
+- **A saved level is in place the instant the player starts.** The extension used to find the
+  player a moment after it had begun playing, so a level saved below 1× could let a stream play
+  at full volume for a fraction of a second first. The page now knows the level before the
+  player exists and applies it in the same instant it starts. The level also returns faster
+  after a reload for the same reason. A player that is told to play before its stream is
+  attached, which some live-stream players do, is caught the moment the sound actually starts;
+  before, such a tab could keep playing at native volume until you opened the popup.
+
 ## 1.2.0 - 2026-09-23
 
 - **Save a level for a site.** Set the slider, press *save* in the new row under the limiter, and
