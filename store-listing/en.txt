@@ -4,12 +4,13 @@ Tab Volume Booster lets you make any browser tab louder (up to 6x) or quieter, a
 • Turn a backing track DOWN below your instrument: great for practising along, when you want the song quiet under your guitar.
 • Fullscreen-friendly: on YouTube and most sites it adjusts the page's own audio, so native fullscreen keeps working while boosted.
 • Per-tab: each tab remembers its own level; nothing is shared, and it's forgotten when you close the tab.
-• Survives page reloads and "next episode" transitions, follows the video even when the player is swapped out, and has a built-in limiter to tame distortion on hard boosts.
+• Save a level for a site: press "save" in the popup and every new tab you open on that site starts at that level. One click forgets it again.
+• Survives page reloads and "next episode" transitions (on sites you rarely visit, with your first click on the page), follows the video even when the player is swapped out, and has a built-in limiter to tame distortion on hard boosts.
 • One-click reset back to normal.
-• Available in 14 languages. Translations are community contributions, see the GitHub repo to add yours.
+• Available in 14 languages. Contributions are welcome: see the GitHub repo to add or improve one.
 
 Privacy: runs entirely on your device. Nothing is uploaded, no analytics, no ads, no data collected.
 
 Open source (GPL-3.0): https://github.com/marcanxo/tab-volume-booster
 
-Note: DRM-protected sites (Netflix, Spotify, Disney+, etc.) can't be adjusted in-page, so they're boosted via capture mode instead; fullscreen is unavailable there while boosted.
+Note: DRM-protected sites (Netflix, Spotify, Disney+, etc.) can't be adjusted in-page, so they're boosted via capture mode instead; fullscreen is unavailable there while boosted. A saved level takes effect there once you open the popup.

@@ -234,6 +234,27 @@
     // script of their own in this document (a page.evaluate carries user activation - the one
     // thing the autoplay-policy scenario has to keep absent) or that load this feed in a frame.
     if (new URLSearchParams(location.search).get("auto") === "audible") window.feed.addAudible();
+    // a player that attaches well after the load, like a slow site's
+    if (new URLSearchParams(location.search).get("auto") === "late") setTimeout(() => window.feed.addAudible(), 1500);
+    // a live-stream style player: plays through srcObject, no URL anywhere (live-stream players
+    // hand the element a MediaSource handle; a stream is the stand-in the fixture can build)
+    if (new URLSearchParams(location.search).get("auto") === "stream") {
+      const ac = new AudioContext();
+      const osc = ac.createOscillator();
+      const dest = ac.createMediaStreamDestination();
+      osc.connect(dest);
+      osc.start();
+      const canvas = document.createElement("canvas");
+      canvas.width = 320; canvas.height = 180;
+      const g2d = canvas.getContext("2d");
+      setInterval(() => { g2d.fillStyle = "#" + Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, "0"); g2d.fillRect(0, 0, 320, 180); }, 50);
+      const v = document.createElement("video");
+      v.id = "stream";
+      v.style.cssText = "width:560px;height:315px;display:block";
+      v.srcObject = new MediaStream([...canvas.captureStream(20).getVideoTracks(), ...dest.stream.getAudioTracks()]);
+      document.getElementById("feed").appendChild(v);
+      v.play().catch(() => {});
+    }
     window.feedReady = true;
   })();
 </script>

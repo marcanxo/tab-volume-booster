@@ -155,6 +155,10 @@ const swSetGain = (sw, tabId, gain) =>
   sw.evaluate((t, g) => serialized(t, () => setGain(t, g, true)), tabId, gain);
 const swGetMode = (sw, tabId) => sw.evaluate((t) => sget(`tabmode:${t}`), tabId);
 const swGetGain = (sw, tabId) => sw.evaluate((t) => sget(`tabgain:${t}`), tabId);
+// Saved site levels live in storage.local under the worker's own key scheme.
+const swSaveSite = (sw, host, level) => sw.evaluate((h, g) => lset(SITE(h), g), host, level);
+const swForgetSite = (sw, host) => sw.evaluate((h) => ldel(SITE(h)), host);
+const swSavedLevel = (sw, host) => sw.evaluate((h) => lget(SITE(h)), host);
 
 async function tabIdOf(sw, port) {
   return sw.evaluate(async (p) => {
@@ -173,6 +177,23 @@ async function waitEngage(sw, pred, timeoutMs) {
     if (hit) return { hit, elapsed: Date.now() - t0 };
     if (Date.now() - t0 > timeoutMs) return { hit: null, elapsed: Date.now() - t0 };
     await sleep(100);
+  }
+}
+
+// The top frame's live graph as content.js measures it: null when no script runs there (nothing
+// was ever injected, or the document is new), {ok:false} when nothing is engaged, {ok, rms} else.
+const measureTop = (sw, tabId) =>
+  sw.evaluate((t) => chrome.tabs.sendMessage(t, { cmd: "measure" }, { frameId: 0 }).catch(() => null), tabId);
+// Poll until pred(measure) holds. The spy log cannot tell which DOCUMENT an engage landed in (a
+// restore pass still running against the old page logs the same entry), so scenarios that navigate
+// assert on what the CURRENT document actually plays instead.
+async function waitMeasure(sw, tabId, pred, timeoutMs) {
+  const t0 = Date.now();
+  for (;;) {
+    const m = await measureTop(sw, tabId);
+    if (pred(m)) return { m, elapsed: Date.now() - t0 };
+    if (Date.now() - t0 > timeoutMs) return { m: null, last: m, elapsed: Date.now() - t0 };
+    await sleep(250);
   }
 }
 
@@ -1588,6 +1609,328 @@ const scenarios = {
       if (!mode || mode.mode !== "element") return `BUG: a stale captureFailed wiped the live element mode (mode=${JSON.stringify(mode)})`;
       return true;
     } finally { await page.close(); }
+  },
+
+  // ---- saved site levels ----
+
+  // A level saved for a site lands in a NEW tab on that site with no popup involved: the arrival
+  // seeds the tab and the restore machinery applies it. Ducked to 0.05x so the measure can tell it
+  // from native level. Then the non-vacuity half: with the level forgotten, the same new tab gets
+  // nothing at all.
+  async s46_site_level_applies_on_arrival(ctx) {
+    const host = "127.0.0.1";
+    let page;
+    try {
+      await swSaveSite(ctx.sw, host, 0.05);
+      page = await ctx.browser.newPage();
+      await page.goto(`http://127.0.0.1:${ctx.port}/?auto=audible`, { waitUntil: "load" });
+      const { hit, elapsed } = await waitEngage(ctx.sw, (r) => r.ok === true, 8000);
+      if (!hit) return "BUG: the saved site level never engaged in the new tab";
+      const tabId = await tabIdOf(ctx.sw, ctx.port);
+      const gain = await swGetGain(ctx.sw, tabId);
+      const m = await ctx.sw.evaluate((t, f) =>
+        chrome.tabs.sendMessage(t, { cmd: "measure" }, { frameId: f }).catch(() => null), tabId, hit.frameId);
+      ctx.note(`engaged ${elapsed}ms after load, gain=${gain}, rms ${m && m.ok ? m.rms.toFixed(3) : "n/a"}`);
+      if (gain !== 0.05) return `BUG: the tab holds ${gain}, not the saved 0.05`;
+      if (!m || !m.ok || m.rms > 0.1) return `BUG: the new tab plays at native level (measure ${JSON.stringify(m)})`;
+      await page.close(); page = null;
+      await swForgetSite(ctx.sw, host);
+      await swClearLog(ctx.sw);
+      page = await ctx.browser.newPage();
+      await page.goto(`http://127.0.0.1:${ctx.port}/?auto=audible`, { waitUntil: "load" });
+      await sleep(2500);
+      const t2 = await tabIdOf(ctx.sw, ctx.port);
+      const g2 = await swGetGain(ctx.sw, t2);
+      const engages = (await swSpyLog(ctx.sw)).filter((e) => e.cmd === "engage" && e.tabId === t2).length;
+      if (g2 !== undefined || engages) return `sabotage failed: with nothing saved the new tab got gain=${g2}, ${engages} engages`;
+      const note = await ctx.sw.evaluate((t) => sget(TABHOST(t)), t2);
+      if (note !== undefined) return `BUG: the worker noted the site of a tab on a site with no saved level (${note})`;
+      return true;
+    } finally {
+      await swForgetSite(ctx.sw, host);
+      if (page) await page.close().catch(() => {});
+    }
+  },
+
+  // The saved level belongs to its site, and only the ARRIVAL applies it. One tab throughout:
+  // leaving for a site with nothing saved (localhost is a different host) drops a level the tab
+  // only got from the saved one; coming back seeds it again; a level the user then sets in the tab
+  // survives a reload untouched (no re-seeding on the same site) and travels on to the next site,
+  // as a tab's own level always has.
+  async s47_site_level_stays_with_its_site(ctx) {
+    const host = "127.0.0.1";
+    const page = await ctx.browser.newPage();
+    const ducked = (m) => !!(m && m.ok && m.rms < 0.1);     // the 0.05x seed: unmistakable in rms
+    const notDucked = (m) => !m || !m.ok || m.rms > 0.2;    // no script, nothing engaged, or not the seed
+    const boosted = (m) => !!(m && m.ok && m.rms > 0.2);    // the tab's own 1.5x (the limiter caps it, still far above the seed)
+    try {
+      await swSaveSite(ctx.sw, host, 0.05);
+      await page.goto(`http://127.0.0.1:${ctx.port}/?auto=audible`, { waitUntil: "load" });
+      const tabId = await tabIdOf(ctx.sw, ctx.port);
+      let w = await waitMeasure(ctx.sw, tabId, ducked, 8000);
+      if (!w.m) return `setup failed: the saved level never took (last measure ${JSON.stringify(w.last)})`;
+      // 1. leaving for a site with nothing saved: the seeded level stays behind
+      await page.goto(`http://localhost:${ctx.port}/?auto=audible`, { waitUntil: "load" });
+      await sleep(2500);
+      let gain = await swGetGain(ctx.sw, tabId);
+      const m1 = await measureTop(ctx.sw, tabId);
+      ctx.note(`after leaving: gain=${gain} measure=${JSON.stringify(m1)}`);
+      if (gain !== undefined || !notDucked(m1)) return `BUG: the seeded level followed the tab to another site (gain=${gain}, measure ${JSON.stringify(m1)})`;
+      const note = await ctx.sw.evaluate((t) => sget(TABHOST(t)), tabId);
+      if (note !== undefined) return `BUG: the note of the saved site outlived the visit (${note})`;
+      // 2. back on the site: seeded again
+      await page.goto(`http://127.0.0.1:${ctx.port}/?auto=audible`, { waitUntil: "load" });
+      w = await waitMeasure(ctx.sw, tabId, ducked, 8000);
+      gain = await swGetGain(ctx.sw, tabId);
+      if (!w.m || gain !== 0.05) return `BUG: coming back to the site did not apply the saved level again (gain=${gain}, measure ${JSON.stringify(w.m || w.last)})`;
+      // 3. the user's own level in the tab survives a reload: no re-seeding on the same site
+      const r = await swSetGain(ctx.sw, tabId, 1.5);
+      if (r.mode !== "element") return `setup failed: ${JSON.stringify(r)}`;
+      await page.reload({ waitUntil: "load" });
+      w = await waitMeasure(ctx.sw, tabId, boosted, 8000);
+      gain = await swGetGain(ctx.sw, tabId);
+      ctx.note(`after reload: gain=${gain} measure=${JSON.stringify(w.m || w.last)}`);
+      if (gain !== 1.5) return `BUG: the reload re-applied the saved level over the tab's own (gain=${gain}, expected 1.5)`;
+      if (!w.m) return `BUG: the tab's own level was not restored after the reload (last measure ${JSON.stringify(w.last)})`;
+      // 4. ...and travels with the tab to the next site, as a tab's own level always has
+      await page.goto(`http://localhost:${ctx.port}/?auto=audible`, { waitUntil: "load" });
+      w = await waitMeasure(ctx.sw, tabId, boosted, 8000);
+      gain = await swGetGain(ctx.sw, tabId);
+      if (!w.m || gain !== 1.5) return `BUG: the tab's own level did not travel to the next site (gain=${gain}, measure ${JSON.stringify(w.m || w.last)})`;
+      return true;
+    } finally {
+      await swForgetSite(ctx.sw, host);
+      await page.close().catch(() => {});
+    }
+  },
+
+  // The popup's entry points: save keeps the slider's level for the tab's site, saving 1x (off)
+  // and forget both leave nothing behind, and a site with nothing saved seeds no new tab.
+  async s48_site_level_save_and_forget(ctx) {
+    const host = "127.0.0.1";
+    let page = await ctx.browser.newPage();
+    try {
+      await page.goto(`http://127.0.0.1:${ctx.port}/?auto=audible`, { waitUntil: "load" });
+      await sleep(300);
+      const tabId = await tabIdOf(ctx.sw, ctx.port);
+      const s = await ctx.sw.evaluate((t) => siteSave(t, 2), tabId);
+      if (!s || s.host !== host || s.saved !== 2) return `save answered ${JSON.stringify(s)}`;
+      if ((await swSavedLevel(ctx.sw, host)) !== 2) return "the saved level is not in storage";
+      const s1 = await ctx.sw.evaluate((t) => siteSave(t, 1), tabId);
+      if (s1.saved !== null || (await swSavedLevel(ctx.sw, host)) !== undefined) return "BUG: saving 1x (off) left a level behind";
+      await ctx.sw.evaluate((t) => siteSave(t, 2), tabId);
+      const f = await ctx.sw.evaluate((t) => siteForget(t), tabId);
+      if (f.saved !== null || (await swSavedLevel(ctx.sw, host)) !== undefined) return "BUG: forget left the level behind";
+      await page.close(); page = null;
+      await swClearLog(ctx.sw);
+      page = await ctx.browser.newPage();
+      await page.goto(`http://127.0.0.1:${ctx.port}/?auto=audible`, { waitUntil: "load" });
+      await sleep(2500);
+      const t2 = await tabIdOf(ctx.sw, ctx.port);
+      const g = await swGetGain(ctx.sw, t2);
+      if (g !== undefined) return `BUG: a forgotten site level still seeds new tabs (gain=${g})`;
+      return true;
+    } finally {
+      await swForgetSite(ctx.sw, host);
+      if (page) await page.close().catch(() => {});
+    }
+  },
+
+  // The promise for rarely visited sites: a saved level arriving in a fresh tab that Chrome has
+  // not let play sound yet is refused as 'suspended' (nothing hangs, nothing is silenced) and
+  // lands with the first click on the page. Real autoplay policy in a fresh profile, script-hopped
+  // navigation so the document carries no activation (as s41).
+  async s49_site_level_waits_for_first_click(ctx) {
+    const browser2 = await launchChrome({ autoplayPolicyOff: false });
+    let page;
+    try {
+      const sw2 = await getWorker(browser2);
+      await installSpy(sw2);
+      await swSaveSite(sw2, "localhost", 3);
+      page = await browser2.newPage();
+      const target = `http://localhost:${ctx.port}/?auto=audible`;
+      await page.goto(`http://127.0.0.1:${ctx.port}/hop.html?to=${encodeURIComponent(target)}`, { waitUntil: "load" });
+      // The arrival seeds the tab and the restore engages: the answer must be a refusal, not a hang.
+      const t0 = Date.now();
+      let refusal = null;
+      while (!refusal && Date.now() - t0 < 10000) {
+        await sleep(100);
+        refusal = (await swSpyLog(sw2)).find((e) => e.cmd === "engage" && e.res && e.res.reason === "suspended");
+      }
+      if (!refusal) {
+        const seen = (await swSpyLog(sw2)).filter((e) => e.cmd === "engage").map((e) => e.res);
+        return `no 'suspended' refusal within 10s (engages seen: ${JSON.stringify(seen)})`;
+      }
+      const tabId = refusal.tabId;
+      if ((await swGetGain(sw2, tabId)) !== 3) return "BUG: the refusal dropped the seeded level";
+      ctx.note(`refused ${Date.now() - t0}ms after the hop`);
+      await swClearLog(sw2);
+      const pos = await page.evaluate(() => {
+        const v = document.querySelector("video");
+        v.scrollIntoView({ block: "center" });
+        const r = v.getBoundingClientRect();
+        return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+      });
+      await page.mouse.click(pos.x, pos.y);
+      const { hit, elapsed } = await waitEngage(sw2, (r) => r.ok === true, 8000);
+      if (!hit) return "BUG: the saved level never landed after the unlocking click";
+      ctx.note(`boost ${elapsed}ms after the click`);
+      return true;
+    } finally {
+      if (page) await page.close().catch(() => {});
+      await browser2.close().catch(() => {});
+    }
+  },
+
+  // A popup opened while a restore is still running. It used to skip its own apply (a premature
+  // probe could commit capture before the player loads) and show a guessed mode, trusting the
+  // restore to apply the level - but a restore never starts a capture by itself, so on a page only
+  // capture can reach (a saved level arriving on a DRM or cross-origin player) the level never
+  // came, under an amber pill. Now the popup shows no guess and the worker answers it when the
+  // pass settles: the confirmed mode, or its own apply where the restore could not apply the
+  // level. Driven at the worker's entry points (the harness cannot open the real popup): prepare
+  // mid-restore, then afterRestore. The harness has no popup grant, so a capture attempt fails
+  // here; what is checked is that it is made, and only when a popup is waiting.
+  async s50_popup_mid_restore_settles(ctx) {
+    const host = "127.0.0.1";
+    let page;
+    const midRestorePrepare = async (tabId) => {
+      for (let i = 0; i < 40; i++) {
+        const p = await ctx.sw.evaluate((t) => prepare(t), tabId);
+        if (p.restoring) return p;
+        await sleep(100);
+      }
+      return null;
+    };
+    const waitPopup = (tabId) => Promise.race([
+      ctx.sw.evaluate((t) => afterRestore(t), tabId),
+      sleep(20000).then(() => "hung"),
+    ]);
+    const captureCalls = () => ctx.sw.evaluate(() => globalThis.__s50.calls);
+    try {
+      await ctx.sw.evaluate(() => {
+        const orig = chrome.tabCapture.getMediaStreamId.bind(chrome.tabCapture);
+        globalThis.__s50 = { orig, calls: 0 };
+        chrome.tabCapture.getMediaStreamId = (...a) => { globalThis.__s50.calls++; return orig(...a); };
+      });
+      await swSaveSite(ctx.sw, host, 3);
+
+      // 1. A player that attaches late: the popup waits, and the restore's own engage is the answer.
+      page = await ctx.browser.newPage();
+      await page.goto(`http://127.0.0.1:${ctx.port}/?auto=late`, { waitUntil: "load" });
+      let tabId = await tabIdOf(ctx.sw, ctx.port);
+      let prep = await midRestorePrepare(tabId);
+      if (!prep) return "setup failed: no restore pass seen on the late-player page";
+      if (prep.mode !== undefined) return `BUG: the popup is shown a guessed mode mid-restore (${prep.mode})`;
+      let res = await waitPopup(tabId);
+      ctx.note(`late player: ${JSON.stringify(res)}`);
+      if (res === "hung") return "BUG: the popup's wait never ended (late player)";
+      if (res.mode !== "element") return `BUG: the popup's wait on a late player ended with ${JSON.stringify(res)}`;
+      if (await captureCalls()) return "BUG: a capture was tried although the restore engaged the player";
+      await page.close(); page = null;
+
+      // 2. A page only capture could reach (nothing hookable on it): the popup's own apply follows.
+      page = await ctx.browser.newPage();
+      await page.goto(`http://127.0.0.1:${ctx.port}/`, { waitUntil: "load" });
+      tabId = await tabIdOf(ctx.sw, ctx.port);
+      prep = await midRestorePrepare(tabId);
+      if (!prep) return "setup failed: no restore pass seen on the capture-only page";
+      if (prep.mode !== undefined) return `BUG: the popup is shown a guessed mode mid-restore (${prep.mode})`;
+      const t0 = Date.now();
+      res = await waitPopup(tabId);
+      const calls = await captureCalls();
+      ctx.note(`capture-only: answered after ${Date.now() - t0}ms with ${JSON.stringify(res)}, ${calls} capture attempt(s)`);
+      if (res === "hung") return "BUG: the popup's wait never ended (capture-only page)";
+      if (calls < 1) return "BUG: the restore settled and nothing applied the level for the waiting popup";
+      if (res.mode === "capture") return `no grant here, yet the answer claims a capture: ${JSON.stringify(res)}`;
+
+      // 3. Non-vacuity: the same kind of pass with no popup waiting never tries a capture itself.
+      await ctx.sw.evaluate(() => { globalThis.__s50.calls = 0; });
+      await page.reload({ waitUntil: "load" });
+      let seen = false;
+      for (let i = 0; i < 30 && !seen; i++) { seen = await ctx.sw.evaluate((t) => restoring.has(t), tabId); if (!seen) await sleep(100); }
+      if (!seen) return "setup failed: no restore pass after the reload";
+      for (let i = 0; i < 150 && (await ctx.sw.evaluate((t) => restoring.has(t), tabId)); i++) await sleep(100);
+      const alone = await captureCalls();
+      if (alone) return `sabotage failed: a pass with no popup waiting tried ${alone} capture(s) on its own`;
+      return true;
+    } finally {
+      await ctx.sw.evaluate(() => {
+        if (!globalThis.__s50) return;
+        chrome.tabCapture.getMediaStreamId = globalThis.__s50.orig;
+        delete globalThis.__s50;
+      });
+      await swForgetSite(ctx.sw, host);
+      if (page) await page.close().catch(() => {});
+    }
+  },
+
+  // A page whose player no in-page hook can ever take (a live stream fed through srcObject, the
+  // way live-stream players use a MediaSource handle): the probe says so at once, yet the restore
+  // used to keep probing for a hookable element for its full patience - on a heavy page well
+  // over ten seconds, and a popup opened meanwhile waited all of it before the level arrived.
+  // Now the first probe that sees the playing player ends the pass with one capture attempt
+  // (it fails here: no popup grant in the harness).
+  async s51_unhookable_player_ends_restore(ctx) {
+    const host = "127.0.0.1";
+    let page;
+    try {
+      await ctx.sw.evaluate(() => {
+        const orig = chrome.tabCapture.getMediaStreamId.bind(chrome.tabCapture);
+        globalThis.__s51 = { orig, calls: 0 };
+        chrome.tabCapture.getMediaStreamId = (...a) => { globalThis.__s51.calls++; return orig(...a); };
+      });
+      await swSaveSite(ctx.sw, host, 3);
+      page = await ctx.browser.newPage();
+      await page.goto(`http://127.0.0.1:${ctx.port}/?auto=stream`, { waitUntil: "load" });
+      const tabId = await tabIdOf(ctx.sw, ctx.port);
+      // a stream delivers its first frame a beat after play(): wait until the element really plays
+      let playing = false;
+      for (let i = 0; i < 30 && !playing; i++) {
+        playing = await page.evaluate(() => { const v = document.getElementById("stream"); return !!v && !v.paused && v.readyState >= 2; });
+        if (!playing) await sleep(100);
+      }
+      if (!playing) return "setup failed: the stream player never started playing";
+      await ctx.sw.evaluate(() => {
+        globalThis.__s51.cands = [];
+        chrome.runtime.onMessage.addListener((m) => { if (m && m.type === "frameCandidate" && globalThis.__s51) globalThis.__s51.cands.push(m.cand); });
+      });
+      const pm = await ctx.sw.evaluate((t) => predictMode(t), tabId);
+      if (pm.mode !== "capture" || !pm.certain) {
+        const cands = await ctx.sw.evaluate(() => globalThis.__s51.cands);
+        return `BUG: the probe does not call the playing srcObject player unhookable for good: ${JSON.stringify(pm)} candidates ${JSON.stringify(cands)}`;
+      }
+      // time the arrival's pass: it must end right after the player is seen, not after the full patience
+      // settled = no pass running for 600ms in a row; queued re-runs (the player's own churn pings)
+      // are allowed, a pass that keeps probing is not
+      const t0 = Date.now();
+      let idleSince = null;
+      while (Date.now() - t0 < 3500) {
+        const running = await ctx.sw.evaluate((t) => restoring.has(t), tabId);
+        if (running) idleSince = null; else if (idleSince == null) idleSince = Date.now();
+        if (idleSince != null && Date.now() - idleSince >= 600) break;
+        await sleep(100);
+      }
+      const busy = !(idleSince != null && Date.now() - idleSince >= 600);
+      const calls = await ctx.sw.evaluate(() => globalThis.__s51.calls);
+      ctx.note(`pass still running ${Date.now() - t0}ms after load: ${busy}; capture attempts ${calls}`);
+      if (busy) return "BUG: the restore keeps probing a page whose player can only be captured";
+      if (calls < 1) return "BUG: the pass ended without the one capture attempt";
+      // and a popup opened now is answered at once, with its own apply
+      const t1 = Date.now();
+      const res = await Promise.race([ctx.sw.evaluate((t) => afterRestore(t), tabId), sleep(8000).then(() => "hung")]);
+      ctx.note(`popup answered in ${Date.now() - t1}ms: ${JSON.stringify(res)}`);
+      if (res === "hung" || Date.now() - t1 > 3000) return `BUG: a popup opened after the pass still waited (${JSON.stringify(res)})`;
+      return true;
+    } finally {
+      await ctx.sw.evaluate(() => {
+        if (!globalThis.__s51) return;
+        chrome.tabCapture.getMediaStreamId = globalThis.__s51.orig;
+        delete globalThis.__s51;
+      });
+      await swForgetSite(ctx.sw, host);
+      if (page) await page.close().catch(() => {});
+    }
   },
 
   // Release must reach the swapped-in hook: boost, swap, click (boost lands), then 1.0x.

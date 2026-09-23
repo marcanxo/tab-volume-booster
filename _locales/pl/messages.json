@@ -29,6 +29,36 @@
   "limiterHint": {
     "message": "Redukuje zniekształcenia przy mocnym wzmocnieniu"
   },
+  "siteLabel": {
+    "message": "Zapamiętaj dla $HOST$",
+    "placeholders": {
+      "host": {
+        "content": "$1",
+        "example": "youtube.com"
+      }
+    }
+  },
+  "siteHintNone": {
+    "message": "Dotyczy nowych kart tej strony"
+  },
+  "siteHintSaved": {
+    "message": "Nowe karty tej strony zaczynają od $LEVEL$",
+    "placeholders": {
+      "level": {
+        "content": "$1",
+        "example": "1.5×"
+      }
+    }
+  },
+  "siteSave": {
+    "message": "zapisz"
+  },
+  "siteForget": {
+    "message": "zapomnij"
+  },
+  "resetTitleSite": {
+    "message": "Resetuj do 1× (wył.) i zapomnij poziom zapisany dla tej strony"
+  },
   "fsLabel": {
     "message": "Preferuj pełny ekran"
   },

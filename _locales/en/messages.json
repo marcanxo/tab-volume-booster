@@ -39,6 +39,42 @@
     "message": "Tames distortion on hard boosts",
     "description": "One-line hint under the Limiter label."
   },
+  "siteLabel": {
+    "message": "Remember for $HOST$",
+    "description": "Label of the site row. $HOST$ is replaced at runtime by the site's host name, e.g. “Remember for youtube.com”. Keep the placeholder exactly as written.",
+    "placeholders": {
+      "host": {
+        "content": "$1",
+        "example": "youtube.com"
+      }
+    }
+  },
+  "siteHintNone": {
+    "message": "Applies to new tabs on this site",
+    "description": "Hint under the site label while nothing is saved for this site: what pressing “save” will do."
+  },
+  "siteHintSaved": {
+    "message": "New tabs on this site start at $LEVEL$",
+    "description": "Hint under the site label once a level is saved. $LEVEL$ is replaced at runtime by the saved level, e.g. “1.5×”. Keep the placeholder exactly as written.",
+    "placeholders": {
+      "level": {
+        "content": "$1",
+        "example": "1.5×"
+      }
+    }
+  },
+  "siteSave": {
+    "message": "save",
+    "description": "Tiny button in the site row: saves the current level for this site. Keep it as short as resetBtn."
+  },
+  "siteForget": {
+    "message": "forget",
+    "description": "The same button once the slider sits on the saved level: forgets the saved level for this site. Keep it as short as resetBtn."
+  },
+  "resetTitleSite": {
+    "message": "Reset to 1× (off) and forget the level saved for this site",
+    "description": "Tooltip of the reset button while a level is saved for the site: reset also forgets it."
+  },
   "fsLabel": {
     "message": "Prefer fullscreen",
     "description": "Per-tab toggle: keep native fullscreen instead of boosting via capture. This name is quoted verbatim inside pausedMsgConflict / pausedMsgPref / captureMsgConflict - keep them identical."

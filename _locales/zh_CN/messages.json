@@ -29,6 +29,36 @@
   "limiterHint": {
     "message": "抑制大幅增强时的失真"
   },
+  "siteLabel": {
+    "message": "记住 $HOST$ 的设置",
+    "placeholders": {
+      "host": {
+        "content": "$1",
+        "example": "youtube.com"
+      }
+    }
+  },
+  "siteHintNone": {
+    "message": "适用于此网站的新标签页"
+  },
+  "siteHintSaved": {
+    "message": "此网站的新标签页将以 $LEVEL$ 开始",
+    "placeholders": {
+      "level": {
+        "content": "$1",
+        "example": "1.5×"
+      }
+    }
+  },
+  "siteSave": {
+    "message": "保存"
+  },
+  "siteForget": {
+    "message": "清除"
+  },
+  "resetTitleSite": {
+    "message": "重置为 1×（关闭）并清除为此网站保存的设置"
+  },
   "fsLabel": {
     "message": "优先全屏"
   },

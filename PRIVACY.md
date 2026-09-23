@@ -1,26 +1,33 @@
 # Privacy Policy - Tab Volume Booster
 
-_Last updated: 2026-09-08_
+_Last updated: 2026-09-23_
 
-**Tab Volume Booster does not collect, store, transmit, share, or sell any personal data.**
+**Tab Volume Booster does not collect, transmit, share, or sell any personal data.** The few
+settings it keeps, listed below, stay on your device.
 
 ## What it does
 The extension only changes the audio volume of browser tabs you choose to adjust. All audio
 processing happens locally, in real time, on your device.
 
 ## Data the extension stores (on your device only)
-- **Per-tab settings** - the volume level, which method is in use (in-page hook or tab capture)
-  and your "Prefer fullscreen" choice. Kept in Chrome's `session` storage and cleared when the
-  tab or the browser is closed.
+- **Per-tab settings** - the volume level, which method is in use (in-page hook or tab capture),
+  your "Prefer fullscreen" choice and, while the tab is on a site you saved a level for, which of
+  those sites it is on (so that a reload is not mistaken for a new visit). Kept in Chrome's
+  `session` storage and cleared when the tab or the browser is closed.
+- **Saved site levels** - for each site you pressed "save" on: the site's host name (for example
+  `youtube.com`) and the level. Kept in Chrome's `local` storage until you press "forget" or
+  "reset" on that site.
 - **Limiter on/off preference** - kept in Chrome's `local` storage.
 
-That's it. These settings never leave your browser.
+That's it. These settings never leave your browser, and they are used only to apply the volume
+levels you choose. The extension's use of this information complies with the Chrome Web Store
+User Data Policy, including the Limited Use requirements.
 
 ## What the extension does not do
 - No analytics, tracking, telemetry, or ads.
 - No external servers, accounts, or third-party services. Nothing is ever uploaded.
-- It does not record, save, or transmit any audio, page content, browsing history, or
-  personal information.
+- It does not record, save, or transmit any audio, page content, or personal information, and it
+  keeps no browsing history: the only sites it remembers are the ones you pressed "save" on.
 
 ## The one request it makes (and why)
 Before routing a page's own audio through its volume control, the extension must be sure the
@@ -47,10 +54,10 @@ make for that file. Media on other origins is never requested this way.
 - **Tab audio access / capture** is used solely to re-output the current tab's own audio at your
   chosen volume. The audio is processed locally and never leaves the device.
 - **Site access** is needed so the in-page volume control can run on whatever site you choose to
-  adjust. It runs only in tabs where you have set a level: it is injected when you open the popup
-  or move the slider, and injected again automatically after a reload or a player swap while that
-  tab's level is set. It never runs in tabs you have not adjusted, and it never reads or sends
-  page content.
+  adjust. It runs only in tabs that have a level: it is injected when you open the popup or move
+  the slider, when a tab arrives on a site you saved a level for, and again automatically after a
+  reload or a player swap while that tab's level is set. It never runs anywhere else, and it never
+  reads or sends page content.
 
 ## Contact
 Questions or issues: <https://github.com/marcanxo/tab-volume-booster> (open an issue).

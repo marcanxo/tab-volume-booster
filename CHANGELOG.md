@@ -3,6 +3,23 @@
 What changed in each release, in plain terms. Versions match the ones published on the
 [Chrome Web Store](https://chromewebstore.google.com/detail/lcbedgoeigfomodfdiepidklaoplonii).
 
+## 1.2.0 - 2026-09-23
+
+- **Save a level for a site.** Set the slider, press *save* in the new row under the limiter, and
+  every new tab you open on that site starts at that level: right away on sites Chrome lets play
+  sound without a click (YouTube and the like), otherwise with your first click on the page, and
+  on sites that need capture mode as soon as you open the popup. Whatever you set in a tab
+  afterwards stays that tab's own, as before, and a level a tab only got from the saved one is
+  left behind when the tab moves on to another site. *forget* (or *reset*) drops the saved level
+  again. Saved levels stay on your device.
+- **A popup opened while a page is still loading now waits for it.** It used to show a guessed
+  status at once and leave the rest to the automatic re-apply, which cannot start a capture on its
+  own: on sites that need capture mode, the level only arrived once you opened the popup again. The
+  popup now shows the confirmed status as soon as the page has settled, and applies the level
+  itself wherever that is still needed. Pages whose player can only be reached by capture (DRM,
+  or live streams that are not played from a file address) now settle as soon as the player
+  starts, instead of being searched for a directly adjustable one for many seconds.
+
 ## 1.1.9 - 2026-09-08
 
 - **Fixed: a tab whose slider could go dead on sites Chrome has not yet allowed to play sound.**

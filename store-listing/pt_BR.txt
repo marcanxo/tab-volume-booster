@@ -4,12 +4,13 @@ O Tab Volume Booster permite deixar qualquer aba do navegador mais alta (até 6x
 • Deixe a base MAIS BAIXA que o seu instrumento: perfeito para tocar junto, quando você quer a música baixinha por trás do seu violão.
 • Compatível com tela cheia: no YouTube e na maioria dos sites, o ajuste é feito no áudio da própria página, então a tela cheia nativa continua funcionando mesmo com o aumento ativo.
 • Por aba: cada aba lembra o próprio nível; nada é compartilhado, e tudo é esquecido quando você fecha a aba.
-• Sobrevive a recarregamentos da página e à transição de “próximo episódio”, acompanha o vídeo mesmo quando o player é trocado e tem um limitador embutido para conter a distorção em aumentos fortes.
+• Salve um nível para um site: aperte “salvar” no popup e cada nova aba que você abrir nesse site começa nesse nível. Um clique e ele é esquecido de novo.
+• Sobrevive a recarregamentos da página e à transição de “próximo episódio” (em sites que você visita pouco, a partir do seu primeiro clique na página), acompanha o vídeo mesmo quando o player é trocado e tem um limitador embutido para conter a distorção em aumentos fortes.
 • Um clique para redefinir e voltar ao normal.
-• Disponível em 14 idiomas. As traduções são contribuições da comunidade; veja o repositório no GitHub para adicionar a sua.
+• Disponível em 14 idiomas. Contribuições são bem-vindas: veja o repositório no GitHub para adicionar ou melhorar um idioma.
 
 Privacidade: funciona totalmente no seu dispositivo. Nada é enviado para servidores, sem análise de uso, sem anúncios, sem coleta de dados.
 
 Código aberto (GPL-3.0): https://github.com/marcanxo/tab-volume-booster
 
-Observação: sites protegidos por DRM (Netflix, Spotify, Disney+ etc.) não podem ser ajustados na própria página, então o aumento é feito via modo captura; nesses sites, a tela cheia fica indisponível enquanto o aumento estiver ativo.
+Observação: sites protegidos por DRM (Netflix, Spotify, Disney+ etc.) não podem ser ajustados na própria página, então o aumento é feito via modo captura; nesses sites, a tela cheia fica indisponível enquanto o aumento estiver ativo. Nesses sites, um nível salvo é aplicado assim que você abre o popup.

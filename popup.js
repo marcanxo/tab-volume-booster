@@ -16,7 +16,7 @@ const isUnity = (g) => Math.abs(g - UNITY) < 1e-6;
 
 // i18n: with default_locale set, getMessage falls back to English automatically;
 // the || k guard only covers a key missing from en/ too (shows the key, not blank UI).
-const t = (k) => chrome.i18n.getMessage(k) || k;
+const t = (k, subs) => chrome.i18n.getMessage(k, subs) || k;
 
 // Localize the static markup (elements tagged data-i18n / data-i18n-title / data-i18n-aria).
 // The English text in the HTML stays in place as the no-JS-visible default.
@@ -65,13 +65,18 @@ const els = {
   fsRow: document.getElementById("fsRow"),
   fsToggle: document.getElementById("fsToggle"),
   conflictMsg: document.getElementById("conflictMsg"),
-  reset: document.getElementById("reset")
+  reset: document.getElementById("reset"),
+  siteLabel: document.getElementById("siteLabel"),
+  siteHint: document.getElementById("siteHint"),
+  siteBtn: document.getElementById("siteBtn")
 };
 
 let tab = null;
 let useLimiter = true;
 let fsPriority = false; // per-tab "prefer fullscreen over capture" (only meaningful on a conflict)
 let paused = false;     // in 'paused' mode the slider value is a stored target, NOT an active boost
+let siteHost = null;    // the tab's site as the row names it (null until known: the row stays as marked up)
+let siteSaved = null;   // the level saved for that site, or null
 
 function canBoost(url) {
   if (!url) return false;
@@ -125,6 +130,23 @@ function render(gain) {
     document.documentElement.style.setProperty("--accent", accent);
     document.documentElement.style.setProperty("--glow", glow);
   }
+  renderSite();
+}
+
+// What the site button would do right now: save the slider's level for the site, or forget the
+// saved one (when the slider already sits on it, or at 1x where there is nothing to save).
+function siteAction() {
+  const cur = gainFromPos(parseFloat(els.slider.value));
+  if (siteSaved != null && (isUnity(cur) || Math.abs(cur - siteSaved) < 1e-6)) return "forget";
+  return isUnity(cur) ? null : "save";
+}
+function renderSite() {
+  if (!siteHost) return;
+  const action = siteAction();
+  els.siteBtn.textContent = t(action === "forget" ? "siteForget" : "siteSave");
+  els.siteBtn.disabled = action === null;
+  els.siteHint.textContent = siteSaved != null ? t("siteHintSaved", [fmtGain(siteSaved) + "×"]) : t("siteHintNone");
+  els.reset.title = t(siteSaved != null ? "resetTitleSite" : "resetTitle"); // reset forgets the saved level too
 }
 
 function showMode(mode, conflict, fsPref) {
@@ -183,7 +205,10 @@ async function init() {
     els.mode.style.display = "none"; // no probe will run - don't leave the pill on "Checking…"
     return;
   }
-  els.sub.textContent = new URL(tab.url).hostname.replace(/^www\./, "") + " · " + t("subThisTab");
+  siteHost = new URL(tab.url).hostname.replace(/^www\./, "");
+  els.sub.textContent = siteHost + " · " + t("subThisTab");
+  els.siteLabel.textContent = t("siteLabel", [siteHost]);
+  renderSite();
 
   const pref = await chrome.storage.local.get(LIMITER_KEY);
   useLimiter = pref[LIMITER_KEY] !== false;
@@ -242,11 +267,31 @@ async function init() {
     });
   });
 
+  // Save / forget for the site. Optimistic: the row reflects the click at once; the worker's
+  // answer (what it actually holds for the site) is what stays. Live before prepare like the rest,
+  // and a click that comes first also beats the prepare result below.
+  let siteTouched = false;
+  els.siteBtn.addEventListener("click", () => {
+    const action = siteAction();
+    if (!action) return;
+    siteTouched = true;
+    const level = gainFromPos(parseFloat(els.slider.value));
+    siteSaved = action === "save" ? level : null;
+    renderSite();
+    const msg = action === "save" ? { type: "siteSave", tabId: tab.id, level } : { type: "siteForget", tabId: tab.id };
+    chrome.runtime.sendMessage(msg, (res) => {
+      if (res && "saved" in res) { siteSaved = res.saved; renderSite(); }
+    });
+  });
+
   els.reset.addEventListener("click", () => {
     userTouched = true;
+    siteTouched = true;
+    siteSaved = null;                         // reset also forgets the level saved for this site
     els.slider.value = posFromGain(UNITY);   // snap the thumb to center (1×)
     render(UNITY);
     pushGain(UNITY);                          // setGain(1.0) → release → "Not boosting"
+    chrome.runtime.sendMessage({ type: "siteForget", tabId: tab.id }, () => {});
   });
 
   // Non-destructive predict + restore (worker probes the page and returns mode + saved level).
@@ -255,6 +300,7 @@ async function init() {
   );
 
   fsPriority = !!prep.fsPriority;
+  if (!siteTouched) siteSaved = typeof prep.saved === "number" ? prep.saved : null; // showMode below re-renders the row
   let gain = typeof prep.gain === "number" ? Math.min(MAX, Math.max(MIN, prep.gain)) : UNITY;
   // A drag that happened while prepare was in flight is the newest user intent - never snap the
   // thumb back to the stored level over it.
@@ -265,10 +311,19 @@ async function init() {
   showMode(prep.mode, prep.conflict, fsPriority);
 
   // Re-apply on open (restores the level after a reload; harmless nudge if already running).
-  // Skip while a background reload-restore is in flight - it will apply the level, and a
-  // competing call here could commit a premature "capture" before the player has loaded.
-  // Skip too when the user already dragged: their push is newer than the stored level.
-  if (!isUnity(gain) && !prep.restoring && !userTouched) pushGain(gain);
+  // Skip when the user already dragged: their push is newer than the stored level.
+  // While a restore is in flight (a reload, a player swap, a saved site level arriving), applying
+  // from here could commit a premature "capture" before the player has loaded. The worker answers
+  // instead once that pass has settled: with the mode it confirmed, or with its own apply where
+  // the restore could not apply the level (a capture needs this popup to have been opened).
+  if (!isUnity(gain) && !userTouched) {
+    if (!prep.restoring) pushGain(gain);
+    else chrome.runtime.sendMessage({ type: "afterRestore", tabId: tab.id }, (res) => {
+      if (!res || !res.mode || userTouched) return; // a drag meanwhile is newer: its own answer shows
+      showMode(res.mode, res.conflict, fsPriority);
+      if (res.failed === true) els.body.classList.add("paused-view"); // same honest dim as pushGain
+    });
+  }
 }
 
 applyI18n();

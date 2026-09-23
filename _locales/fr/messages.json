@@ -29,6 +29,36 @@
   "limiterHint": {
     "message": "Atténue la distorsion en cas de boost élevé"
   },
+  "siteLabel": {
+    "message": "Mémoriser pour $HOST$",
+    "placeholders": {
+      "host": {
+        "content": "$1",
+        "example": "youtube.com"
+      }
+    }
+  },
+  "siteHintNone": {
+    "message": "S'applique aux nouveaux onglets de ce site"
+  },
+  "siteHintSaved": {
+    "message": "Les nouveaux onglets de ce site démarrent à $LEVEL$",
+    "placeholders": {
+      "level": {
+        "content": "$1",
+        "example": "1.5×"
+      }
+    }
+  },
+  "siteSave": {
+    "message": "enregistrer"
+  },
+  "siteForget": {
+    "message": "oublier"
+  },
+  "resetTitleSite": {
+    "message": "Réinitialiser à 1× (désactivé) et oublier le niveau enregistré pour ce site"
+  },
   "fsLabel": {
     "message": "Priorité au plein écran"
   },

@@ -29,6 +29,36 @@
   "limiterHint": {
     "message": "तेज़ बूस्ट पर आवाज़ को फटने से बचाता है"
   },
+  "siteLabel": {
+    "message": "$HOST$ के लिए याद रखें",
+    "placeholders": {
+      "host": {
+        "content": "$1",
+        "example": "youtube.com"
+      }
+    }
+  },
+  "siteHintNone": {
+    "message": "इस साइट के नए टैब पर लागू होगा"
+  },
+  "siteHintSaved": {
+    "message": "इस साइट के नए टैब $LEVEL$ से शुरू होंगे",
+    "placeholders": {
+      "level": {
+        "content": "$1",
+        "example": "1.5×"
+      }
+    }
+  },
+  "siteSave": {
+    "message": "सहेजें"
+  },
+  "siteForget": {
+    "message": "भूल जाएँ"
+  },
+  "resetTitleSite": {
+    "message": "1× (बंद) पर रीसेट करें और इस साइट के लिए सहेजा गया स्तर भूल जाएँ"
+  },
   "fsLabel": {
     "message": "फ़ुलस्क्रीन को प्राथमिकता"
   },

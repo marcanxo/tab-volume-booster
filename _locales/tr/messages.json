@@ -29,6 +29,36 @@
   "limiterHint": {
     "message": "Güçlü artırmalarda ses bozulmasını azaltır"
   },
+  "siteLabel": {
+    "message": "$HOST$ için hatırla",
+    "placeholders": {
+      "host": {
+        "content": "$1",
+        "example": "youtube.com"
+      }
+    }
+  },
+  "siteHintNone": {
+    "message": "Bu sitedeki yeni sekmelere uygulanır"
+  },
+  "siteHintSaved": {
+    "message": "Bu sitedeki yeni sekmeler $LEVEL$ ile başlar",
+    "placeholders": {
+      "level": {
+        "content": "$1",
+        "example": "1.5×"
+      }
+    }
+  },
+  "siteSave": {
+    "message": "kaydet"
+  },
+  "siteForget": {
+    "message": "unut"
+  },
+  "resetTitleSite": {
+    "message": "1× (kapalı) değerine sıfırla ve bu site için kaydedilen düzeyi unut"
+  },
   "fsLabel": {
     "message": "Tam ekranı tercih et"
   },

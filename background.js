@@ -11,12 +11,16 @@
 // the in-page hook on elements that pass the pre-check, so we never silence a tab.
 //
 // Per-tab state lives in chrome.storage.session: clears on browser close, wiped on tab close.
+// Levels the user saved for a site live in chrome.storage.local: this device, until forgotten.
 
 const TABGAIN = (id) => `tabgain:${id}`;   // number
 const TABMODE = (id) => `tabmode:${id}`;   // { mode:'element'|'capture'|'paused', frameId?, conflict? }
 const TABFS  = (id) => `tabfs:${id}`;      // bool: user prefers fullscreen over capture for this tab
+const TABHOST = (id) => `tabhost:${id}`;   // the saved site the tab is on (kept only while it is on one)
+const TABSEED = (id) => `tabseed:${id}`;   // true while the tab's level came from a saved site level, untouched since
 const ACTIVE_KEY = "active";               // array of tabIds with a live CAPTURE graph
 const LIMITER_KEY = "useLimiter";          // storage.local, global pref
+const SITE = (host) => `site:${host}`;     // storage.local: the level saved for that site (number, never unity)
 
 // auto-restore-after-reload tuning. status:'complete' fires before YouTube attaches its
 // <video>/blob, so we re-probe a few times instead of falling back to capture on the first miss.
@@ -32,6 +36,9 @@ const isActiveGain = (g) => typeof g === "number" && !isUnity(g);
 const sget = async (k) => (await chrome.storage.session.get(k))[k];
 const sset = (k, v) => chrome.storage.session.set({ [k]: v });
 const sdel = (k) => chrome.storage.session.remove(k);
+const lget = async (k) => (await chrome.storage.local.get(k))[k];
+const lset = (k, v) => chrome.storage.local.set({ [k]: v });
+const ldel = (k) => chrome.storage.local.remove(k);
 
 // ---- capture-mode bookkeeping ----
 // All mutations of the shared active list go through one chain: mark/unmark are read-modify-writes
@@ -115,6 +122,17 @@ function serialized(tabId, fn) {
   tail.catch(() => {}).finally(() => { if (opChain.get(tabId) === tail) opChain.delete(tabId); });
   return tail;
 }
+// A candidate no in-page hook can ever take, however long we wait: DRM, a src that cannot be
+// parsed, or a PLAYING element with no URL at all (its media comes through srcObject - a
+// MediaSource handle, as live-stream players use, or a stream) or from another origin without
+// CORS. Only consulted when no safe candidate exists anywhere (a safe one always wins), so an ad
+// playing over a hookable content player never counts: the probe reports the player instead.
+function unhookableForGood(c) {
+  const k = c.cand;
+  if (!k.hasElement || k.safe) return false;
+  if (k.reason === "drm" || k.reason === "bad-url") return true;
+  return k.playing && (k.reason === "no-src" || k.reason === "cross-origin-no-cors");
+}
 function pickBest(cands) {
   const safe = cands.filter((c) => c.cand.hasElement && c.cand.safe);
   if (!safe.length) return null;
@@ -136,7 +154,10 @@ async function predictMode(tabId) {
       clearTimeout(st.grace);
       probeWaiters.delete(id); // delete OUR entry only - never a concurrent probe's
       const best = pickBest(st.cands);
-      resolve(best ? { mode: "element", frameId: best.frameId } : { mode: "capture" });
+      // certain: the page's player is there and can only ever be reached by capture, so waiting
+      // for a hookable element (the restore loop's patience) cannot pay off.
+      resolve(best ? { mode: "element", frameId: best.frameId }
+                   : { mode: "capture", certain: st.cands.some(unhookableForGood) });
     };
     probeWaiters.set(id, st);
     st.timer = setTimeout(settle, 350); // ceiling for pages whose frames answer slowly or not at all
@@ -207,6 +228,7 @@ async function release(tabId) {
   // Intent first: with the level gone, a worker death mid-release cannot leave a stored level
   // that the next reload or popup open would resurrect. Everything after is idempotent cleanup.
   await sdel(TABGAIN(tabId));
+  await sdel(TABSEED(tabId));
   // Broadcast the stop to ALL frames, not just the recorded one: TABMODE can be stale or cleared
   // (mid-restore), and a re-probe may have retargeted the mode to a different frame earlier - a
   // hook we engaged anywhere must never survive a release. stop() is idempotent in every frame.
@@ -251,6 +273,9 @@ async function applyCaptureOrPause(tabId, gain, useLimiter, conflict) {
 async function setGain(tabId, gain, useLimiter) {
   if (isUnity(gain)) { await release(tabId); return { mode: "none" }; } // unity = off (boost & attenuate both engage)
 
+  // A level the user changes is the tab's own from here on and travels with the tab. A re-apply
+  // of the same level (the popup does one on open) is not a change and keeps a seeded level seeded.
+  if ((await sget(TABGAIN(tabId))) !== gain) await sdel(TABSEED(tabId));
   await sset(TABGAIN(tabId), gain);
 
   let info = await getMode(tabId);
@@ -292,19 +317,22 @@ async function setGain(tabId, gain, useLimiter) {
 async function prepare(tabId) {
   const gain = (await sget(TABGAIN(tabId))) ?? 1;
   const fsPriority = (await sget(TABFS(tabId))) === true;
-  // If a reload-restore is in flight, don't launch a competing probe or commit a premature mode -
-  // let the restore loop settle. Flag it so the popup skips its own re-apply (the loop handles it).
+  const site = await siteInfo(tabId);             // { host, saved } for the popup's site row
+  // If a restore is in flight, don't launch a competing probe or commit a premature mode - let
+  // the restore settle. Flag it: the popup then waits for the pass to end (afterRestore) instead
+  // of applying on its own. The mode shown meanwhile is the tab's mode from before the pass when
+  // there was one; otherwise none at all (the popup keeps "Checking…"), never a guess.
   if (restoring.has(tabId)) {
     const p = restoring.get(tabId);                   // stashed prior mode (or `true` very briefly)
     const pm = p && typeof p === "object" ? p : null;
-    return { mode: pm ? pm.mode : "capture", conflict: !!(pm && pm.conflict), gain, fsPriority, restoring: true };
+    return { mode: pm ? pm.mode : undefined, conflict: !!(pm && pm.conflict), gain, fsPriority, restoring: true, ...site };
   }
   let info = await getMode(tabId);
   // Display-only prediction - deliberately NOT persisted. A pre-load "capture" guess would stick
   // in TABMODE and route a later boost straight to capture (fullscreen lost) even though the
   // player has long since attached a hookable element; setGain re-probes fresh instead.
   if (!info) info = await predictMode(tabId);
-  return { mode: info.mode, conflict: !!info.conflict, gain, fsPriority };
+  return { mode: info.mode, conflict: !!info.conflict, gain, fsPriority, ...site };
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
@@ -392,6 +420,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  if (msg.type === "afterRestore") {
+    afterRestore(msg.tabId).then(sendResponse).catch(() => sendResponse({ mode: "none", failed: true }));
+    return true;
+  }
+
+  if (msg.type === "siteSave") {
+    siteSave(msg.tabId, msg.level).then(sendResponse).catch(() => sendResponse({ host: null, saved: null }));
+    return true;
+  }
+
+  if (msg.type === "siteForget") {
+    siteForget(msg.tabId).then(sendResponse).catch(() => sendResponse({ host: null, saved: null }));
+    return true;
+  }
+
   if (msg.type === "setGain") {
     serialized(msg.tabId, () => setGain(msg.tabId, msg.gain, msg.useLimiter))
       .then(sendResponse)
@@ -408,11 +451,93 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   serialized(tabId, async () => {
     await sdel(TABGAIN(tabId));
     await sdel(TABFS(tabId));
+    await sdel(TABHOST(tabId));
+    await sdel(TABSEED(tabId));
     await clearMode(tabId);
     await unmarkActive(tabId);
     toOffscreen({ cmd: "stop", tabId });
   });
 });
+
+// ---- saved site levels ----
+// Opt-in, per site, explicit: the user presses "save" in the popup and the level of that moment is
+// kept for the site (storage.local: this device, until forgotten). It is applied when a tab ARRIVES
+// on the site - a new tab, a typed address, a link from elsewhere - and never on a reload or an
+// in-site navigation, so whatever the user then sets in the tab stays the tab's own, as before.
+// Applying goes through the ordinary restore machinery below, with its platform limits: audible
+// without a click only where the autoplay policy lets a fresh AudioContext run, otherwise with the
+// first gesture on the page (the frame's one-shot retry); capture-mode sites wait for the popup,
+// since no capture grant exists without it.
+// Which site a tab is on is noted (TABHOST) only while the tab is on a site with a saved level:
+// that note is what tells a reload or an in-site navigation from a new visit. Tabs anywhere else
+// leave no trace of where they are.
+
+// The site a URL belongs to, the way the popup shows it: the host without a leading "www.".
+// Subdomains stay separate on purpose (music.youtube.com is not youtube.com). null for anything
+// that is not a web page (chrome://, file://, the store), where nothing can be applied anyway.
+function hostOf(url) {
+  try {
+    const u = new URL(url);
+    if (!/^https?:$/.test(u.protocol)) return null;
+    return u.hostname.replace(/^www\./, "") || null;
+  } catch (_) { return null; }
+}
+async function hostOfTab(tabId) {
+  try { return hostOf((await chrome.tabs.get(tabId)).url); } catch (_) { return null; }
+}
+async function savedLevel(host) {
+  if (!host) return null;
+  const g = await lget(SITE(host));
+  return isActiveGain(g) ? g : null;
+}
+// The level comes from the popup's slider, not from TABGAIN: it is what the user is looking at,
+// and the setGain carrying it may still be queued. Saving "off" (unity) is a forget.
+async function siteSave(tabId, level) {
+  const host = await hostOfTab(tabId);
+  if (!host) return { host: null, saved: null };
+  if (isActiveGain(level)) {
+    await lset(SITE(host), level);
+    // The tab is on this site right now: note it, so its next reload is not taken for a new
+    // visit that would put the saved level on top of whatever the user sets in the tab.
+    if ((await sget(TABHOST(tabId))) === undefined) await sset(TABHOST(tabId), host);
+  } else {
+    await ldel(SITE(host));
+  }
+  return { host, saved: await savedLevel(host) };
+}
+async function siteForget(tabId) {
+  const host = await hostOfTab(tabId);
+  if (host) await ldel(SITE(host));
+  return { host, saved: null };
+}
+// What the popup shows in its site row. Also notes a tab that sits on a saved site without a note
+// (open since before an update, which clears session storage): its next reload must not count as
+// a new visit, or the saved level would land on top of the one the user is about to set there.
+async function siteInfo(tabId) {
+  const host = await hostOfTab(tabId);
+  const saved = await savedLevel(host);
+  if (saved != null && (await sget(TABHOST(tabId))) === undefined) await sset(TABHOST(tabId), host);
+  return { host, saved };
+}
+// A tab arrives on a site when its host changes. Runs through the per-tab queue, so it can never
+// interleave with a user action on the same tab; the restore that applies the level runs after.
+async function onArrival(tabId, url) {
+  const host = hostOf(url);
+  const prev = await sget(TABHOST(tabId));          // the saved site the tab was on, if any
+  if (host && host === prev) return;                  // same saved site: a reload or in-site navigation
+  // A level this tab only carried because of the site it came from stays behind with that site;
+  // a level the user set in the tab themselves travels with the tab, as it always has.
+  if ((await sget(TABSEED(tabId))) === true) await release(tabId);
+  const saved = await savedLevel(host);
+  if (saved == null) {
+    if (prev !== undefined) await sdel(TABHOST(tabId)); // off the saved sites: no note kept
+    return;
+  }
+  await sset(TABHOST(tabId), host);
+  await sset(TABGAIN(tabId), saved);
+  await sset(TABSEED(tabId), true);
+  await clearMode(tabId); // whatever mode the previous site settled on says nothing about this one
+}
 
 // ---- auto-restore boost after a full-document reload / navigation ----
 // A reload destroys the in-page graph (element mode) and the capture track; the per-tab gain in
@@ -434,7 +559,7 @@ async function restoreAfterLoad(tabId, gain, useLimiter, prior) {
   for (let i = 0; i < RESTORE_ATTEMPTS; i++) {
     // Re-read the level EVERY iteration: the user may have released (→ abort) or moved the slider
     // (→ apply the new level, not the one captured when the restore started) mid-loop.
-    const g = await sget(TABGAIN(tabId));
+    let g = await sget(TABGAIN(tabId));
     if (!isActiveGain(g)) return; // tab closed / dropped to 1.0× mid-restore → abort
     // The tab itself may have closed mid-loop (the serialized cleanup already ran): bail before
     // setMode/ensureOffscreen can recreate session keys or an idle offscreen doc for a dead tab.
@@ -446,6 +571,12 @@ async function restoreAfterLoad(tabId, gain, useLimiter, prior) {
       // frame's hook (if it survived) so it can't stay hot alongside the new one.
       if (prior && prior.mode === "element" && prior.frameId != null && prior.frameId !== info.frameId)
         await toFrame(tabId, prior.frameId, { cmd: "stop" });
+      // The probe took a moment: re-read the level right before acting on it. A release meanwhile
+      // (the user, or a tab leaving the site its seeded level belonged to, whose new document the
+      // probe may just have found) must not be engaged over, and a level that changed meanwhile
+      // is engaged at its new value rather than corrected afterwards.
+      g = await sget(TABGAIN(tabId));
+      if (!isActiveGain(g)) { await clearMode(tabId); return; }
       const res = await engageFrame(tabId, info.frameId, { cmd: "engage", gain: g, useLimiter });
       if (res && res.ok) {
         // Same as setGain: a prior CAPTURE graph must not keep boosting under the new hook
@@ -496,9 +627,13 @@ async function restoreAfterLoad(tabId, gain, useLimiter, prior) {
         return;
       }
       // "no element yet / player still initializing" → keep waiting.
-    } else if (priorCapture) {
-      // No hookable element and this tab genuinely needs capture → apply once (honors fsPriority;
-      // clears the mode rather than lying if capture can't start, e.g. grant revoked by reload).
+    } else if (priorCapture || info.certain) {
+      // No hookable element and this tab genuinely needs capture - it did before, or the page's
+      // player is one no in-page hook can ever take (DRM, a live stream fed through a MediaSource
+      // handle). Apply once (honors fsPriority; clears the mode rather than lying if capture can't
+      // start: a reload revokes the grant, and a new visit has none until the popup is opened)
+      // and stop. Waiting could not change the answer, and a popup opened meanwhile would wait
+      // on a restore that probes the page for many seconds before its own apply may run.
       await applyCaptureOrPause(tabId, g, useLimiter, !!(prior && prior.conflict));
       await reverifyGain(tabId, g, useLimiter, !!(prior && prior.conflict));
       return;
@@ -532,6 +667,31 @@ async function reverifyGain(tabId, applied, useLimiter, conflict) {
   }
 }
 
+// A popup that opened while a restore was running waits for that pass to settle, then gets what
+// a popup opened afterwards would: the mode the restore confirmed, or - where the restore could not
+// apply the level - the popup's own apply. That is the case for every page only capture can reach
+// (DRM, cross-origin players): a restore never starts a capture on its own, and only an opened popup
+// lets one start. Waiters are served at the end of the pass, while it still counts as running, so
+// a re-run queued meanwhile starts only afterwards and can never interleave with their apply.
+const restoreWaiters = new Map(); // tabId -> [resolve]
+function afterRestore(tabId) {
+  if (!restoring.has(tabId)) return settleForPopup(tabId);
+  return new Promise((resolve) => {
+    if (!restoreWaiters.has(tabId)) restoreWaiters.set(tabId, []);
+    restoreWaiters.get(tabId).push(resolve);
+  });
+}
+function settleForPopup(tabId) {
+  return serialized(tabId, async () => {
+    const g = await sget(TABGAIN(tabId));
+    if (!isActiveGain(g)) return { mode: "none" };
+    const info = await getMode(tabId);
+    if (info) return { mode: info.mode, conflict: !!info.conflict }; // the restore applied it
+    const pref = await chrome.storage.local.get(LIMITER_KEY);
+    return await setGain(tabId, g, pref[LIMITER_KEY] !== false);
+  });
+}
+
 // Shared by reload (onUpdated) and element-swap (elementLost): patiently re-apply the stored boost.
 // deferIfBusy=true (element-swap) re-runs once after an in-flight restore instead of being dropped.
 async function kickRestore(tabId, deferIfBusy) {
@@ -544,11 +704,16 @@ async function kickRestore(tabId, deferIfBusy) {
   restoring.set(tabId, true);
   try {
     const prior = await getMode(tabId);    // remember element vs capture/paused before we clear it
-    restoring.set(tabId, prior || { mode: "capture" }); // stash for prepare()'s display while restoring
+    restoring.set(tabId, prior || {});    // stash for prepare()'s display while restoring ({} = unknown)
     await clearMode(tabId);                // stale frameId after reload/swap → force a fresh re-probe
     const pref = await chrome.storage.local.get(LIMITER_KEY);
     await restoreAfterLoad(tabId, gain, pref[LIMITER_KEY] !== false, prior);
   } finally {
+    for (let w; (w = restoreWaiters.get(tabId)); ) {   // popups that opened mid-pass (afterRestore)
+      restoreWaiters.delete(tabId);
+      const res = await settleForPopup(tabId).catch(() => ({ mode: "none", failed: true }));
+      for (const resolve of w) resolve(res);
+    }
     restoring.delete(tabId);
     if (pendingRekick.delete(tabId)) kickRestore(tabId, true); // a swap arrived mid-restore → one more pass
   }
@@ -558,6 +723,11 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   // status 'complete' = full load finished. changeInfo.url alone = SPA route change
   // (history.pushState) - those never reach 'complete' again, but players swap on them.
   if (changeInfo.status !== "complete" && typeof changeInfo.url !== "string") return;
-  if (!tab || !tab.url || !/^https?:/.test(tab.url)) return;  // skip chrome:// / store / etc.
-  kickRestore(tabId, true); // defer-if-busy: a signal arriving mid-restore queues one more pass
+  if (!tab || !tab.url) return;
+  // Arrival first (it may seed or drop the level), then the ordinary restore of whatever level
+  // the tab holds now. Pages that are not web pages (chrome://, the store) only register as
+  // having left the previous site: nothing runs there.
+  serialized(tabId, () => onArrival(tabId, tab.url)).catch(() => {}).then(() => {
+    if (/^https?:/.test(tab.url)) kickRestore(tabId, true); // defer-if-busy: a signal arriving mid-restore queues one more pass
+  });
 });

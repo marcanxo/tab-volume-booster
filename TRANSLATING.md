@@ -27,6 +27,8 @@ Chrome picks the language automatically from the user's browser UI language and 
 - The popup is only **268px wide**: keep the status labels (`modeElement`, `modePaused`, `modeCapture`, `modeCaptureConflict`, `modeNone`) short, ideally under ~30 characters.
 - Keep numeric level forms exactly as-is: `1×`, `6x`, `1.0×` (Latin digits, same `×`), and keep the ` · ` separator where the English has it.
 - `fsLabel` is the visible name of the *Prefer fullscreen* toggle. Four messages quote that name (`pausedMsgConflict`, `pausedMsgPref`, `captureMsgConflict`, `modePausedTitlePref`) - the quoted text there must **exactly match your `fsLabel` translation**, in your language's own quotation marks.
+- `siteLabel` and `siteHintSaved` contain the placeholders `$HOST$` and `$LEVEL$`: the site's name and the saved level are filled in at runtime. Keep them exactly as written (uppercase, both dollar signs), put them wherever your grammar needs them, and copy the `placeholders` block of those two messages unchanged.
+- `siteSave` and `siteForget` sit on a tiny button next to the site's name, like `resetBtn`: keep them just as short.
 - Don't translate brand names: **Tab Volume Booster**, YouTube, Chrome.
 
 ## Improving an existing translation

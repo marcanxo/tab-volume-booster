@@ -29,6 +29,36 @@
   "limiterHint": {
     "message": "Reduziert Verzerrungen bei starkem Boost"
   },
+  "siteLabel": {
+    "message": "Für $HOST$ merken",
+    "placeholders": {
+      "host": {
+        "content": "$1",
+        "example": "youtube.com"
+      }
+    }
+  },
+  "siteHintNone": {
+    "message": "Gilt für neue Tabs auf dieser Seite"
+  },
+  "siteHintSaved": {
+    "message": "Neue Tabs auf dieser Seite starten mit $LEVEL$",
+    "placeholders": {
+      "level": {
+        "content": "$1",
+        "example": "1.5×"
+      }
+    }
+  },
+  "siteSave": {
+    "message": "speichern"
+  },
+  "siteForget": {
+    "message": "vergessen"
+  },
+  "resetTitleSite": {
+    "message": "Auf 1× zurücksetzen (aus) und den für diese Seite gespeicherten Pegel vergessen"
+  },
   "fsLabel": {
     "message": "Vollbild bevorzugen"
   },

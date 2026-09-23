@@ -4,12 +4,13 @@ Tab Volume Booster vous permet de monter le son de n'importe quel onglet du navi
 • Baissez un playback en dessous de votre instrument : idéal pour travailler vos morceaux, quand vous voulez la chanson discrète sous votre guitare.
 • Compatible plein écran : sur YouTube et la plupart des sites, le volume est réglé directement sur l'audio de la page, si bien que le plein écran natif continue de fonctionner pendant le boost.
 • Par onglet : chaque onglet mémorise son propre niveau ; rien n'est partagé, et tout est oublié dès que vous fermez l'onglet.
-• Survit aux rechargements de page et au passage à l'« épisode suivant », suit la vidéo même quand le lecteur est remplacé, et intègre un limiteur qui atténue la distorsion en cas de boost élevé.
+• Enregistrez un niveau pour un site : appuyez sur « enregistrer » dans la fenêtre de l'extension, et chaque nouvel onglet ouvert sur ce site démarre à ce niveau. Un clic suffit pour l'oublier.
+• Survit aux rechargements de page et au passage à l'« épisode suivant » (sur les sites que vous visitez rarement, dès votre premier clic sur la page), suit la vidéo même quand le lecteur est remplacé, et intègre un limiteur qui atténue la distorsion en cas de boost élevé.
 • Retour au volume normal en un clic.
-• Disponible en 14 langues. Les traductions sont des contributions de la communauté ; rendez-vous sur le dépôt GitHub pour ajouter la vôtre.
+• Disponible en 14 langues. Les contributions sont les bienvenues : rendez-vous sur le dépôt GitHub pour ajouter ou améliorer une langue.
 
 Confidentialité : tout fonctionne sur votre appareil. Rien n'est téléversé, aucune mesure d'audience, aucune publicité, aucune donnée collectée.
 
 Open source (GPL-3.0) : https://github.com/marcanxo/tab-volume-booster
 
-Remarque : sur les sites protégés par DRM (Netflix, Spotify, Disney+, etc.), l'audio ne peut pas être réglé directement dans la page ; le boost passe alors par le mode capture, et le plein écran y est indisponible pendant le boost.
+Remarque : sur les sites protégés par DRM (Netflix, Spotify, Disney+, etc.), l'audio ne peut pas être réglé directement dans la page ; le boost passe alors par le mode capture, et le plein écran y est indisponible pendant le boost. Un niveau enregistré s'y applique dès que vous ouvrez la fenêtre de l'extension.

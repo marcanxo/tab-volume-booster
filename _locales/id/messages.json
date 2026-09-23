@@ -29,6 +29,36 @@
   "limiterHint": {
     "message": "Meredam distorsi saat boost tinggi"
   },
+  "siteLabel": {
+    "message": "Ingat untuk $HOST$",
+    "placeholders": {
+      "host": {
+        "content": "$1",
+        "example": "youtube.com"
+      }
+    }
+  },
+  "siteHintNone": {
+    "message": "Berlaku untuk tab baru di situs ini"
+  },
+  "siteHintSaved": {
+    "message": "Tab baru di situs ini dimulai pada $LEVEL$",
+    "placeholders": {
+      "level": {
+        "content": "$1",
+        "example": "1.5×"
+      }
+    }
+  },
+  "siteSave": {
+    "message": "simpan"
+  },
+  "siteForget": {
+    "message": "lupakan"
+  },
+  "resetTitleSite": {
+    "message": "Reset ke 1× (nonaktif) dan lupakan tingkat yang disimpan untuk situs ini"
+  },
   "fsLabel": {
     "message": "Utamakan layar penuh"
   },

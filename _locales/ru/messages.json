@@ -29,6 +29,36 @@
   "limiterHint": {
     "message": "Смягчает искажения при сильном усилении"
   },
+  "siteLabel": {
+    "message": "Запомнить для $HOST$",
+    "placeholders": {
+      "host": {
+        "content": "$1",
+        "example": "youtube.com"
+      }
+    }
+  },
+  "siteHintNone": {
+    "message": "Действует для новых вкладок этого сайта"
+  },
+  "siteHintSaved": {
+    "message": "Новые вкладки этого сайта открываются с $LEVEL$",
+    "placeholders": {
+      "level": {
+        "content": "$1",
+        "example": "1.5×"
+      }
+    }
+  },
+  "siteSave": {
+    "message": "сохранить"
+  },
+  "siteForget": {
+    "message": "забыть"
+  },
+  "resetTitleSite": {
+    "message": "Сбросить до 1× (выкл.) и забыть уровень, сохранённый для этого сайта"
+  },
   "fsLabel": {
     "message": "Приоритет полного экрана"
   },

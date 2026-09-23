@@ -29,6 +29,36 @@
   "limiterHint": {
     "message": "Reduce la distorsión en amplificaciones fuertes"
   },
+  "siteLabel": {
+    "message": "Recordar para $HOST$",
+    "placeholders": {
+      "host": {
+        "content": "$1",
+        "example": "youtube.com"
+      }
+    }
+  },
+  "siteHintNone": {
+    "message": "Se aplica a las pestañas nuevas de este sitio"
+  },
+  "siteHintSaved": {
+    "message": "Las pestañas nuevas de este sitio empiezan en $LEVEL$",
+    "placeholders": {
+      "level": {
+        "content": "$1",
+        "example": "1.5×"
+      }
+    }
+  },
+  "siteSave": {
+    "message": "guardar"
+  },
+  "siteForget": {
+    "message": "olvidar"
+  },
+  "resetTitleSite": {
+    "message": "Restablecer a 1× (desactivado) y olvidar el nivel guardado para este sitio"
+  },
   "fsLabel": {
     "message": "Priorizar pantalla completa"
   },

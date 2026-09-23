@@ -29,6 +29,36 @@
   "limiterHint": {
     "message": "Riduce la distorsione ai volumi più alti"
   },
+  "siteLabel": {
+    "message": "Ricorda per $HOST$",
+    "placeholders": {
+      "host": {
+        "content": "$1",
+        "example": "youtube.com"
+      }
+    }
+  },
+  "siteHintNone": {
+    "message": "Vale per le nuove schede di questo sito"
+  },
+  "siteHintSaved": {
+    "message": "Le nuove schede di questo sito partono da $LEVEL$",
+    "placeholders": {
+      "level": {
+        "content": "$1",
+        "example": "1.5×"
+      }
+    }
+  },
+  "siteSave": {
+    "message": "salva"
+  },
+  "siteForget": {
+    "message": "dimentica"
+  },
+  "resetTitleSite": {
+    "message": "Reimposta a 1× (off) e dimentica il livello salvato per questo sito"
+  },
   "fsLabel": {
     "message": "Preferisci schermo intero"
   },

@@ -29,6 +29,36 @@
   "limiterHint": {
     "message": "強いブースト時の音割れを抑えます"
   },
+  "siteLabel": {
+    "message": "$HOST$ の設定を記憶",
+    "placeholders": {
+      "host": {
+        "content": "$1",
+        "example": "youtube.com"
+      }
+    }
+  },
+  "siteHintNone": {
+    "message": "このサイトの新しいタブに適用されます"
+  },
+  "siteHintSaved": {
+    "message": "このサイトの新しいタブは $LEVEL$ で開始します",
+    "placeholders": {
+      "level": {
+        "content": "$1",
+        "example": "1.5×"
+      }
+    }
+  },
+  "siteSave": {
+    "message": "保存"
+  },
+  "siteForget": {
+    "message": "解除"
+  },
+  "resetTitleSite": {
+    "message": "1×（オフ）にリセットし、このサイトの保存した設定を解除します"
+  },
   "fsLabel": {
     "message": "全画面を優先"
   },

@@ -29,6 +29,36 @@
   "limiterHint": {
     "message": "강한 부스트 시 소리 왜곡을 줄여 줍니다"
   },
+  "siteLabel": {
+    "message": "$HOST$ 설정 기억",
+    "placeholders": {
+      "host": {
+        "content": "$1",
+        "example": "youtube.com"
+      }
+    }
+  },
+  "siteHintNone": {
+    "message": "이 사이트의 새 탭에 적용됩니다"
+  },
+  "siteHintSaved": {
+    "message": "이 사이트의 새 탭은 $LEVEL$에서 시작합니다",
+    "placeholders": {
+      "level": {
+        "content": "$1",
+        "example": "1.5×"
+      }
+    }
+  },
+  "siteSave": {
+    "message": "저장"
+  },
+  "siteForget": {
+    "message": "해제"
+  },
+  "resetTitleSite": {
+    "message": "1×(꺼짐) 상태로 초기화하고 이 사이트에 저장된 설정을 해제합니다"
+  },
   "fsLabel": {
     "message": "전체 화면 우선"
   },
