@@ -57,6 +57,7 @@ const fmtGain = (g) => (g < UNITY ? String(parseFloat(g.toFixed(2))) : g.toFixed
 const els = {
   body: document.body,
   readout: document.getElementById("readout"),
+  readoutNum: document.getElementById("readoutNum"),
   sub: document.getElementById("sub"),
   slider: document.getElementById("slider"),
   limiter: document.getElementById("limiter"),
@@ -119,7 +120,7 @@ function render(gain) {
   els.slider.style.setProperty("--fill", (posFromGain(gain) / POS_MAX) * 100 + "%");
   // Screen readers get the actual multiplier, not the raw 0-1000 track position.
   els.slider.setAttribute("aria-valuetext", fmtGain(gain) + "×");
-  els.readout.innerHTML = `${fmtGain(gain)}<span class="x">×</span>`;
+  els.readoutNum.textContent = fmtGain(gain); // text only: the popup never parses HTML
   if (paused) {
     // Boost is intentionally NOT applied - show a calm neutral palette, not the hot boost color,
     // so the big readout doesn't imply an active boost (the CSS also dims it via .paused-view).

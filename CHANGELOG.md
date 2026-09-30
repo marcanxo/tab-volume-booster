@@ -3,6 +3,15 @@
 What changed in each release, in plain terms. Versions match the ones published on the
 [Chrome Web Store](https://chromewebstore.google.com/detail/lcbedgoeigfomodfdiepidklaoplonii).
 
+## 1.2.2 - 2026-09-30
+
+- **Security hardening.** Every part of the extension checks where a command comes from. The
+  popup's commands are only taken from the popup, and the capture engine only listens to the
+  extension's own background worker. The list of sites you saved a level for is readable by the
+  extension itself only, not by the small script it places in pages you adjust. An ordinary web
+  page cannot reach any of these paths. The checks cover a page that exploits a flaw in Chrome
+  itself.
+
 ## 1.2.1 - 2026-09-24
 
 The first Chrome Web Store release of the 1.2 line: it includes everything listed under 1.2.0.

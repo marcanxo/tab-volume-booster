@@ -163,6 +163,13 @@ async function installSpyOnce(sw) {
 const swSpyLog = (sw) => sw.evaluate(() => globalThis.__spy.log);
 const swClearLog = (sw) => sw.evaluate(() => { globalThis.__spy.log.length = 0; });
 const swClearSpy = (sw) => sw.evaluate(() => { globalThis.__spy.log.length = 0; globalThis.__spy.pings = 0; globalThis.__spy.hooked = 0; });
+// Runs `func` in a tab's ISOLATED world: the voice of our content script, which is what a page
+// that has broken into its renderer could use. Returns what func returns.
+// The function travels as source into the worker's DevTools evaluation (no eval in any extension
+// context), and chrome.scripting serializes it into the tab.
+async function asContentScript(sw, tabId, func, args) {
+  return sw.evaluate(`chrome.scripting.executeScript({ target: { tabId: ${tabId} }, world: "ISOLATED", func: ${func.toString()}, args: ${JSON.stringify(args || [])} }).then((r) => r && r[0] && r[0].result)`);
+}
 // A tab by a fragment of its URL (several tabs on one origin: tabIdOf would find the first).
 async function tabIdByUrl(sw, fragment) {
   return sw.evaluate(async (f) => {
@@ -1620,13 +1627,10 @@ const scenarios = {
       const tabId = await tabIdOf(ctx.sw, ctx.port);
       const r1 = await swSetGain(ctx.sw, tabId, 3);
       if (r1.mode !== "element") return `setup failed: ${JSON.stringify(r1)}`;
-      // the stale failure report arrives from an extension context outside the worker
-      await ctx.sw.evaluate((t) => chrome.scripting.executeScript({
-        target: { tabId: t },
-        func: (id) => { chrome.runtime.sendMessage({ type: "captureFailed", tabId: id }); },
-        args: [t],
-      }), tabId);
-      await sleep(400);
+      // the stale failure report, as the worker handles it when the capture engine sends it (a
+      // report from anywhere else never gets this far: see s61)
+      await ctx.sw.evaluate((t) => onCaptureFailed(t), tabId);
+      await sleep(200);
       const mode = await swGetMode(ctx.sw, tabId);
       if (!mode || mode.mode !== "element") return `BUG: a stale captureFailed wiped the live element mode (mode=${JSON.stringify(mode)})`;
       return true;
@@ -2306,6 +2310,97 @@ const scenarios = {
       await swSetGain(ctx.sw, tabId, 1).catch(() => {});
       await page.close();
     }
+  },
+
+  // ---- security hardening (1.2.2) ----
+  // Code with content-script privileges in one tab, which a page that has broken into its
+  // renderer could run, must not be able to drive the popup's commands: not learn which site
+  // another tab shows, not set a level there, not save one, not fake a capture-engine report.
+  async s61_popup_commands_only_from_popup(ctx) {
+    let a, b;
+    try {
+      a = await ctx.browser.newPage();
+      await a.goto(`http://127.0.0.1:${ctx.port}/?tab=a`, { waitUntil: "load" });
+      b = await ctx.browser.newPage();
+      await b.goto(`http://localhost:${ctx.port}/?tab=b-private`, { waitUntil: "load" });
+      const ta = await tabIdByUrl(ctx.sw, "tab=a");
+      const tb = await tabIdByUrl(ctx.sw, "tab=b-private");
+      await ctx.sw.evaluate((t) => setMode(t, { mode: "capture", conflict: false }), tb);
+      const out = await asContentScript(ctx.sw, ta, async (other) => {
+        const ask = (m) => chrome.runtime.sendMessage(m).then((r) => r, (e) => "rejected: " + e.message);
+        return {
+          prepare: await ask({ type: "prepare", tabId: other }),
+          setGain: await ask({ type: "setGain", tabId: other, gain: 4, useLimiter: true }),
+          siteSave: await ask({ type: "siteSave", tabId: other, level: 2 }),
+          fakeFailure: await ask({ type: "captureFailed", tabId: other }),
+        };
+      }, [tb]);
+      await sleep(500);
+      const gain = await swGetGain(ctx.sw, tb);
+      const saved = await swSavedLevel(ctx.sw, "localhost");
+      const mode = await swGetMode(ctx.sw, tb);
+      ctx.note(`answers ${JSON.stringify(out)}, other tab gain=${gain}, saved=${saved}, mode=${JSON.stringify(mode)}`);
+      if (out.prepare && typeof out.prepare === "object") return `BUG: a page context learned another tab's state: ${JSON.stringify(out.prepare)}`;
+      if (gain !== undefined) return `BUG: a page context set a level in another tab (${gain})`;
+      if (saved !== undefined) return `BUG: a page context saved a site level (${saved})`;
+      if (!mode || mode.mode !== "capture") return `BUG: a faked capture-engine report cleared another tab's mode (${JSON.stringify(mode)})`;
+      return true;
+    } finally {
+      await swForgetSite(ctx.sw, "localhost").catch(() => {});
+      for (const p of [a, b]) if (p) await p.close().catch(() => {});
+    }
+  },
+
+  // The capture engine (offscreen document) takes commands from the service worker only. A 'stop'
+  // sent from a page context gets no answer and tears down nothing.
+  async s62_capture_engine_only_from_worker(ctx) {
+    const page = await newFeedPage(ctx.browser, ctx.port);
+    try {
+      const tabId = await tabIdOf(ctx.sw, ctx.port);
+      await ctx.sw.evaluate(() => ensureOffscreen());
+      const fromWorker = await ctx.sw.evaluate((t) =>
+        chrome.runtime.sendMessage({ target: "offscreen", cmd: "stop", tabId: t, immediate: true }).catch((e) => "rejected: " + e.message), tabId);
+      if (!fromWorker || fromWorker.ok !== true) return `setup failed: the engine does not answer the worker (${JSON.stringify(fromWorker)})`;
+      const fromPage = await asContentScript(ctx.sw, tabId, async (t) =>
+        chrome.runtime.sendMessage({ target: "offscreen", cmd: "stop", tabId: t, immediate: true }).then((r) => r, (e) => "rejected: " + e.message), [tabId]);
+      ctx.note(`worker -> ${JSON.stringify(fromWorker)}, page context -> ${JSON.stringify(fromPage)}`);
+      if (fromPage && typeof fromPage === "object") return `BUG: the capture engine obeyed a page context (${JSON.stringify(fromPage)})`;
+      return true;
+    } finally { await page.close(); }
+  },
+
+  // The list of saved sites lives in storage.local, which Chrome opens to content scripts unless
+  // the extension closes it. Ours never read it, and a page context must not either.
+  async s63_saved_sites_closed_to_pages(ctx) {
+    const page = await newFeedPage(ctx.browser, ctx.port);
+    try {
+      await swSaveSite(ctx.sw, "secret-site.example", 1.5);
+      const tabId = await tabIdOf(ctx.sw, ctx.port);
+      const got = await asContentScript(ctx.sw, tabId, async () =>
+        chrome.storage.local.get(null).then((r) => r, (e) => "rejected: " + e.message), []);
+      ctx.note(`storage.local from a page context -> ${JSON.stringify(got)}`);
+      if (got && typeof got === "object") return `BUG: a page context read the saved sites (${JSON.stringify(got)})`;
+      return true;
+    } finally {
+      await swForgetSite(ctx.sw, "secret-site.example").catch(() => {});
+      await page.close();
+    }
+  },
+
+  // No HTML parsing of values anywhere in the extension: the popup, the worker, the page script
+  // and the engine set text, never markup. A regression guard as much as a check.
+  async s64_no_html_sinks(ctx) {
+    const hits = [];
+    for (const f of ["popup.js", "background.js", "content.js", "offscreen.js"]) {
+      const src = fs.readFileSync(path.join(REPO, f), "utf8");
+      src.split(/\r?\n/).forEach((line, i) => {
+        const code = line.replace(/\/\/.*$/, "");
+        if (/\.(innerHTML|outerHTML)\s*=|insertAdjacentHTML|document\.write|\beval\s*\(|new Function\s*\(/.test(code)) hits.push(`${f}:${i + 1}: ${line.trim()}`);
+      });
+    }
+    ctx.note(`${hits.length} HTML/code sinks`);
+    if (hits.length) return `BUG: HTML or code evaluation sinks found: ${hits.join(" | ")}`;
+    return true;
   },
 
   // Release must reach the swapped-in hook: boost, swap, click (boost lands), then 1.0x.

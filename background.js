@@ -40,6 +40,14 @@ const sdel = (k) => chrome.storage.session.remove(k);
 const lget = async (k) => (await chrome.storage.local.get(k))[k];
 const lset = (k, v) => chrome.storage.local.set({ [k]: v });
 const ldel = (k) => chrome.storage.local.remove(k);
+// storage.local holds the list of sites a level was saved for, and Chrome exposes that area to
+// content scripts by default. Ours never read it, so it is closed to them: out of reach of a page
+// that has broken into its renderer. (storage.session is trusted-contexts-only by default.) This
+// runs at every worker start. The worker is up before it injects any content script.
+try {
+  if (chrome.storage.local.setAccessLevel)
+    chrome.storage.local.setAccessLevel({ accessLevel: "TRUSTED_CONTEXTS" }).catch(() => {});
+} catch (_) { /* a Chrome without setAccessLevel keeps its default */ }
 
 // ---- when this copy of the extension arrived ----
 // A tab that was open across an update (or a reload of the unpacked extension) still carries the
@@ -368,8 +376,34 @@ async function prepare(tabId) {
   return { mode: info.mode, conflict: !!info.conflict, stale: !!info.stale, gain, fsPriority, ...site };
 }
 
+// ---- who may say what ----
+// A web page cannot message the extension at all (no externally_connectable). These checks are
+// for the case Chrome's extension guidance asks to plan for: a page that has broken into its own
+// renderer process, where it can speak with the voice of our content script. So the popup's
+// commands are taken from the popup only, the capture engine's reports from the offscreen document
+// only, and a page's reports (which act on the sender's own tab) from content scripts in tabs.
+const extPage = (p) => chrome.runtime.getURL(p);
+const fromExtPage = (s, p) => !!s && !s.tab && s.id === chrome.runtime.id && s.url === extPage(p);
+const POPUP_COMMANDS = new Set(["prepare", "setGain", "setFsPriority", "afterRestore", "siteSave", "siteForget"]);
+const ENGINE_REPORTS = new Set(["trackEnded", "captureFailed"]);
+function allowed(msg, sender) {
+  if (POPUP_COMMANDS.has(msg.type)) return fromExtPage(sender, "popup.html");
+  if (ENGINE_REPORTS.has(msg.type)) return fromExtPage(sender, "offscreen.html");
+  return !!(sender && sender.tab && sender.id === chrome.runtime.id); // page reports: frameCandidate, navigated, ...
+}
+
+// A capture start failed in the engine (expired streamId, another capturer, …). The bookkeeping
+// is dropped so the active list and mode never claim a graph that doesn't exist. Only a CAPTURE
+// record is cleared: this report arrives outside the per-tab queue, and a failed start for an old
+// stream must not wipe an element mode that a newer user action has recorded meanwhile.
+function onCaptureFailed(tabId) {
+  unmarkActive(tabId);
+  return getMode(tabId).then((m) => { if (m && m.mode === "capture") return clearMode(tabId); }).catch(() => {});
+}
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (msg.target === "offscreen") return; // not for us
+  if (!msg || msg.target === "offscreen") return; // not for us
+  if (!allowed(msg, sender)) return;               // no answer at all: nothing to learn from it
 
   if (msg.type === "frameCandidate") {
     const tabId = sender.tab && sender.tab.id;
@@ -387,15 +421,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg.type === "trackEnded") { unmarkActive(msg.tabId); return; } // capture stream died (reload)
 
-  if (msg.type === "captureFailed") {
-    // Offscreen couldn't open the capture (expired streamId, another capturer, …). Drop the
-    // bookkeeping so the active list / mode never claim a graph that doesn't exist - but only a
-    // CAPTURE record: this arrives outside the per-tab queue, and a failed start for an old
-    // stream must not wipe an element mode that a newer user action has recorded meanwhile.
-    unmarkActive(msg.tabId);
-    getMode(msg.tabId).then((m) => { if (m && m.mode === "capture") return clearMode(msg.tabId); }).catch(() => {});
-    return;
-  }
+  if (msg.type === "captureFailed") { onCaptureFailed(msg.tabId); return; }
 
   if (msg.type === "hooked") {
     // A frame took a player on its own (the click pre-hook, the self-unmute auto-hook, or a

@@ -167,8 +167,11 @@ function stop(tabId, immediate) {
   setTimeout(teardown, 120);
 }
 
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  if (msg.target !== "offscreen") return;
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!msg || msg.target !== "offscreen") return;
+  // Commands come from the service worker and nowhere else: a content script (or a page that has
+  // broken into its renderer and speaks with its voice) must not stop or retune any tab's capture.
+  if (!sender || sender.tab || sender.id !== chrome.runtime.id || sender.url !== chrome.runtime.getURL("background.js")) return;
   if (msg.cmd === "start") {
     // Async ack: resolves only once the capture is genuinely live (or has failed).
     start(msg.tabId, msg.streamId, msg.gain, msg.useLimiter)
