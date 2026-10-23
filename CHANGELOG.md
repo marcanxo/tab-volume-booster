@@ -1,12 +1,12 @@
 # Changelog
 
-What changed in each release, in plain terms. Versions match the ones published on the
+What each release brings, in plain terms. Versions match the ones published on the
 [Chrome Web Store](https://chromewebstore.google.com/detail/lcbedgoeigfomodfdiepidklaoplonii).
 
 ## 1.2.2 - 2026-09-30
 
 - **Security hardening.** Every part of the extension checks where a command comes from. The
-  popup's commands are only taken from the popup, and the capture engine only listens to the
+  popup's commands are accepted only from the popup. The capture engine listens only to the
   extension's own background worker. The list of sites you saved a level for is readable by the
   extension itself only, not by the small script it places in pages you adjust. An ordinary web
   page cannot reach any of these paths. The checks cover a page that exploits a flaw in Chrome
@@ -14,139 +14,140 @@ What changed in each release, in plain terms. Versions match the ones published 
 
 ## 1.2.1 - 2026-09-24
 
-The first Chrome Web Store release of the 1.2 line: it includes everything listed under 1.2.0.
+The first Chrome Web Store release of the 1.2 line. It includes everything listed under 1.2.0.
 
-- **No more false "conflict" after an update.** A tab that was open while the extension updated
-  still has the previous version attached to its player, and Chrome allows only one such
-  attachment per player until the page reloads. The popup blamed the page for this ("already
-  handles its own audio, or another app does"). It now says what actually happened: the boost
-  runs through tab capture for now, and reloading the tab brings fullscreen back.
+- **No false "conflict" after an update.** A tab that is open while the extension updates still
+  has the previous version attached to its player. Chrome allows only one such attachment per
+  player until the page reloads. The popup says what happens in that case: the boost runs through
+  tab capture for now, and reloading the tab brings fullscreen back. It does not blame the page
+  with "already handles its own audio, or another app does".
 - **Live streams on sites like Twitch are adjusted in-page.** Their players take the stream from
-  a media handle instead of a file address, which the extension treated as out of reach, so it
-  fell back to tab capture. Such players are safe to adjust in-page: fullscreen now keeps working
-  while boosted, and a level saved for the site reaches a new tab without opening the popup
-  (with your first click on the page if Chrome has not yet let the site play sound).
-- **Saving a level no longer changes other open tabs.** A tab that was already on the site when
-  you saved a level for it in another tab now keeps its own level, as intended; the saved level is
-  for tabs that arrive on the site afterwards. Before, its next video or reload switched it to the
-  saved level.
-- **A saved level is in place the instant the player starts.** The extension used to find the
-  player a moment after it had begun playing, so a level saved below 1× could let a stream play
-  at full volume for a fraction of a second first. The page now knows the level before the
-  player exists and applies it in the same instant it starts. The level also returns faster
-  after a reload for the same reason. A player that is told to play before its stream is
-  attached, which some live-stream players do, is caught the moment the sound actually starts;
-  before, such a tab could keep playing at native volume until you opened the popup.
+  a media handle instead of a file address. The extension recognizes such players as safe to
+  adjust in-page, so they stay out of tab capture. Fullscreen keeps working while boosted. A
+  level saved for the site reaches a new tab without opening the popup. If Chrome has not yet let
+  the site play sound, it arrives with your first click on the page.
+- **Saving a level leaves other open tabs alone.** A tab that is already on the site when you
+  save a level for it in another tab keeps its own level, as intended. Its next video or reload
+  does not switch it to the saved level. The saved level is for tabs that arrive on the site
+  afterwards.
+- **A saved level is in place the instant the player starts.** For a player in the page itself,
+  the page knows the level before the player exists and applies it in the same instant playback
+  begins, so a stream does not start at full volume on a tab saved below 1×. The level also
+  returns faster after a reload for the same reason. Some live-stream players are told to play
+  before their stream is attached. The extension catches those the moment the sound actually
+  starts, so such a tab does not keep playing at native volume until you open the popup.
 
 ## 1.2.0 - 2026-09-23
 
-- **Save a level for a site.** Set the slider, press *save* in the new row under the limiter, and
-  every new tab you open on that site starts at that level: right away on sites Chrome lets play
-  sound without a click (YouTube and the like), otherwise with your first click on the page, and
-  on sites that need capture mode as soon as you open the popup. Whatever you set in a tab
-  afterwards stays that tab's own, as before, and a level a tab only got from the saved one is
-  left behind when the tab moves on to another site. *forget* (or *reset*) drops the saved level
-  again. Saved levels stay on your device.
-- **A popup opened while a page is still loading now waits for it.** It used to show a guessed
-  status at once and leave the rest to the automatic re-apply, which cannot start a capture on its
-  own: on sites that need capture mode, the level only arrived once you opened the popup again. The
-  popup now shows the confirmed status as soon as the page has settled, and applies the level
-  itself wherever that is still needed. Pages whose player can only be reached by capture (DRM,
-  or live streams that are not played from a file address) now settle as soon as the player
-  starts, instead of being searched for a directly adjustable one for many seconds.
+- **Save a level for a site.** Set the slider and press *save* in the new row under the limiter.
+  Every new tab you open on that site then starts at that level. On sites Chrome lets play sound
+  without a click (YouTube and the like), this happens right away. Elsewhere it happens with your
+  first click on the page. On sites that need capture mode it happens as soon as you open the
+  popup. Whatever you set in a tab afterwards stays that tab's own, like any other per-tab level.
+  A level a tab only got from the saved one stays behind when the tab moves on to another site.
+  *forget* (or *reset*) drops the saved level again. Saved levels stay on your device.
+- **A popup opened while a page is still loading waits for it.** It shows the confirmed status
+  as soon as the page has settled, never a guessed one. It also applies the level itself wherever
+  that is still needed. The automatic re-apply cannot start a capture on its own. On sites that
+  need capture mode, the level therefore arrives with this first popup, not only with a second
+  one. Pages whose player only capture can reach, such as DRM, settle as soon as the player
+  starts. The extension does not spend many seconds
+  searching them for a directly adjustable player.
 
 ## 1.1.9 - 2026-09-08
 
-- **Fixed: a tab whose slider could go dead on sites Chrome has not yet allowed to play sound.**
-  On a site you rarely visit, setting a level before your first click on the page, or reloading
-  a page with a stored level, could leave the extension waiting forever for permission that never
-  comes; nothing worked in that tab until you navigated away. It now steps back after a moment and
-  applies the level with your first click instead.
-- **The audible player wins across frames.** On pages with a large muted background loop next to
-  the real player in an embedded frame, the boost could land on the silent loop while the popup
-  showed everything as fine. What you can hear now takes priority, in every frame.
-- **Capture mode bookkeeping.** A rare timing mix-up could make every slider move fail on a
-  captured tab until you reset it. The extension now checks with its audio engine first instead
-  of trusting its own notes, a late failure report can no longer wipe a working setting, and a
-  reset takes effect even if the extension is interrupted halfway.
+- **No dead slider on sites Chrome has not yet allowed to play sound.** On a site you rarely
+  visit, you may set a level before your first click on the page, or reload a page with a stored
+  level. Chrome's permission to play sound may then never come on its own. The extension waits
+  only a moment for it, then steps back and applies the level with your first click. The tab
+  does not stay stuck until you navigate away.
+- **The audible player wins across frames.** Some pages run a large muted background loop next
+  to the real player in an embedded frame. What you can hear takes priority, in every frame. The
+  boost does not land on the silent loop while the popup shows everything as fine.
+- **Capture mode bookkeeping.** The extension checks with its audio engine first instead of
+  trusting its own notes. A rare timing mix-up cannot make every slider move fail on a captured
+  tab until you reset it. A late failure report cannot wipe a working setting. A reset takes
+  effect even if the extension is interrupted halfway.
 - **The popup's reset button and limiter switch work right after opening**, not only once the
-  first status has come back. An early reset click used to be lost and then overridden.
-- **Documentation:** the privacy policy and README now describe more precisely when the extension
-  runs in a tab and when its one redirect check happens, and list all per-tab settings it keeps.
+  first status has come back. An early reset click takes effect and is not overridden afterwards.
+- **Documentation:** the privacy policy and README describe more precisely when the extension
+  runs in a tab and when its one redirect check happens. They list all per-tab settings it keeps.
 
 ## 1.1.8 - 2026-08-16
 
-- **A muted video can no longer hold on to the boost.** Some pages keep a silent clip looping in
-  the background (a preview or decorative animation). If that clip grabbed the boost first, the
-  video you actually watched played at native volume while the popup claimed everything was fine.
-  The boost now moves on to whatever is audible.
-- **Pressing play on an already unmuted video now applies the boost.** A paused video that was
-  never muted gave no signal at all when started, so it simply played at native volume.
-- **After the extension updates itself, old copies in open tabs stand down.** Chrome updates
-  extensions in the background; a page loaded before the update kept a leftover boost running
-  that the new version could not control. In the worst case the two stacked and doubled the
-  volume. The leftover now detects the situation and returns the tab to native volume.
-- **The status shown in the popup is now confirmed, not assumed.** Capture mode only reports
-  success once the capture has actually started, so a capture that fails to start no longer
-  shows as an active boost.
-- **Navigating back to a page no longer revives a boost you turned off.** Chrome restores pages
-  from a cache when you press back; the restored page now checks with the extension instead of
-  resuming its old state.
-- **The popup no longer ignores input during its first moments.** Moving the slider or pressing
-  an arrow key right after opening was lost, and an early arrow key could even reset the stored
-  level to 1.0 for good.
+- **A muted video cannot hold on to the boost.** Some pages keep a silent clip looping in the
+  background, such as a preview or a decorative animation. When that clip grabs the boost first,
+  the boost moves on to whatever is audible. The video you actually watch does not play at native
+  volume while the popup claims everything is fine.
+- **Pressing play on an already unmuted video applies the boost.** A paused video that was never
+  muted gives no other signal when it starts. The extension reacts to the start itself, so such a
+  video does not simply play at native volume.
+- **After the extension updates itself, leftover copies in open tabs stand down.** Chrome updates
+  extensions in the background. A page that loaded under the previous version keeps a leftover
+  boost running that the new version cannot control. In the worst case the two stack and double
+  the volume. The leftover detects the situation and returns the tab to native volume.
+- **The status shown in the popup is confirmed, not assumed.** Capture mode reports success only
+  once the capture has actually started. A capture that fails to start does not show as an active
+  boost.
+- **Navigating back to a page does not revive a boost you turned off.** Chrome restores pages
+  from a cache when you press back. The restored page checks with the extension instead of
+  resuming its cached state.
+- **The popup takes input from its first moment.** Moving the slider or pressing an arrow key
+  right after opening takes effect. An early arrow key cannot reset the stored level to 1.0 for
+  good.
 
 ## 1.1.7 - 2026-07-30
 
-- **Clicking a muted video now applies the boost instantly.** The level is set inside the click
-  itself, before the site unmutes the video, so nothing plays at the wrong volume first, however
+- **Clicking a muted video applies the boost instantly.** The level is set inside the click
+  itself, before the site unmutes the video. Nothing plays at the wrong volume first, however
   briefly. Feeds that unmute the next clip by themselves while you scroll are covered the same
-  way. Previously this took around 200ms, audible mainly on tabs turned down.
-- **Fixed: a tab whose slider could stop working for good.** When a capture stream died at an
-  unlucky moment (switching to the next episode, for example), volume changes went to an audio
-  engine that no longer existed, and reloading the page did not help. The extension now notices
-  and starts over: the first slider move repairs such a tab.
-- **Clearer wording when a page already processes its own audio.** The old note blamed "another
-  app", sending you hunting for a program that does not exist; some sites route their video
-  sound through their own processing. The note now leads with what matters: the boost is on,
-  only fullscreen is unavailable.
-- **Limits on what a page can make the extension do.** Hooks are created at most at a bounded
-  rate and count per page, so a misbehaving site cannot pile up audio processing behind the
-  scenes.
+  way. The level does not wait for a roundtrip through the background worker, which takes around
+  200ms and is audible mainly on tabs turned down.
+- **A dead capture stream cannot leave the slider broken for good.** A capture stream can die at
+  an unlucky moment, for example when switching to the next episode. Volume changes then go to an
+  audio engine that has shut down, and reloading the page does not help. The extension notices
+  this and starts over. The first slider move repairs such a tab.
+- **Clearer wording when a page processes its own audio.** Some sites route their video sound
+  through their own processing. The note leads with what matters: the boost is on, and only
+  fullscreen is unavailable. It does not blame "another app" and send you hunting for a program
+  that does not exist.
+- **Limits on what a page can make the extension do.** Hooks are created at a bounded rate and in
+  a bounded count per page. A misbehaving site cannot pile up audio processing behind the scenes.
 
 ## 1.1.6 - 2026-07-28
 
-- **The popup now shows the installed version** and links to the source code on GitHub, so you can
+- **The popup shows the installed version** and links to the source code on GitHub. You can
   check at a glance which build you are running and read exactly what it does.
 
 ## 1.1.5 - 2026-07-26
 
-- **The boost now applies about three times faster after you click a muted video.** On feeds where
-  videos autoplay muted and only unmute when clicked, the stored level took up to two seconds to
-  take hold, which was loud and unpleasant on tabs turned *down*. It now lands in roughly 200ms,
-  and stays that fast no matter how many videos you click in a row. The cause was an anti-flood
-  throttle running out of budget; signals that come from a real user gesture now bypass it, with
-  their own small allowance so the protection against pages faking activity still holds.
-- **Fixed: a burst of signals collapsing into one message could use up the whole throttle budget**,
-  delaying the *next* genuine one by up to two seconds. Present since 1.1.4.
-- **Privacy policy corrected.** It stated the extension makes no network requests. It makes exactly
-  one: a same-origin range request to the media file you are already playing, to detect a redirect
-  that would otherwise silence the tab permanently. Nothing is uploaded and no data leaves your
-  device, but the old wording was wrong and is now accurate. See [PRIVACY.md](PRIVACY.md).
+- **The boost applies about three times faster after you click a muted video.** On feeds where
+  videos autoplay muted and only unmute when clicked, the stored level lands in roughly 200ms. It
+  stays that fast no matter how many videos you click in a row. An anti-flood throttle that runs
+  out of budget would otherwise hold the level back for up to two seconds. That is loud and
+  unpleasant on tabs turned *down*. Signals that come from a real user gesture bypass the
+  throttle. They have their own small allowance, so the protection against pages faking activity
+  still holds.
+- **A burst of signals collapsing into one message cannot use up the whole throttle budget.** Such
+  a burst would otherwise delay the *next* genuine signal by up to two seconds. The issue affects
+  1.1.4.
+- **The privacy policy states the one network request.** The extension makes exactly one: a same-origin range request to the media file you
+  are already playing. That request detects a redirect that would otherwise silence the tab
+  permanently. Nothing is uploaded and no data leaves your device. See [PRIVACY.md](PRIVACY.md).
 
 ## 1.1.4 - 2026-07-18
 
-- **The boost survives ad breaks.** Moving the slider while an ad played from a different source
-  could hand the boost over to the ad, which the extension cannot control, leaving your video
-  unboosted and disabling fullscreen for the rest of the session.
-- **Fixed a slowdown on DRM sites** that also contained an ordinary media element: routine page
-  activity sent the extension into a repeating check that never succeeded.
+- **The boost survives ad breaks.** Moving the slider while an ad plays from a different source
+  keeps the boost on your video. The ad, which the extension cannot control, does not take the
+  boost over. Your video stays boosted and fullscreen stays available for the rest of the session.
+- **No slowdown on DRM sites** that also contain an ordinary media element. Routine page activity
+  does not send the extension into a repeating check that never succeeds.
 
 ## 1.1.3 - 2026-07-17
 
-- **Fixed: clicking a muted video sometimes never applied the boost at all.** Unmuting changes
-  nothing the extension could observe, and the previous workaround only armed itself under
-  circumstances that a busy feed often skipped, so the result depended on timing.
+- **Clicking a muted video always applies the boost.** Unmuting changes nothing the extension can
+  observe. The workaround for this arms itself in every case, including the circumstances a busy
+  feed often skips. The result does not depend on timing.
 
 ## 1.1.2 - 2026-07-10
 
@@ -155,20 +156,19 @@ The first Chrome Web Store release of the 1.2 line: it includes everything liste
 
 ## 1.1.1 - 2026-07-07
 
-- Numerous fixes found in a full review of the codebase, including a case where a video could be
-  silenced for good, and several where the boost was lost or applied twice after a page reload or
-  a player swap.
+- Numerous fixes from a full review of the codebase. A video cannot be silenced for good. After a
+  page reload or a player swap, the boost is neither lost nor applied twice.
 
 ## 1.1.0 - 2026-07-06
 
-- **Now speaks 14 languages**, picked automatically from your browser's language. Adding another
-  is a single JSON file, see [TRANSLATING.md](TRANSLATING.md).
+- **Speaks 14 languages**, picked automatically from your browser's language. Adding another is a
+  single JSON file, see [TRANSLATING.md](TRANSLATING.md).
 
 ## 1.0.1 - 2026-07-05
 
-- **Fixed: the boost was silently lost on "next episode" transitions** on sites that swap the
-  player without reloading the page. The popup still showed the old level while the video played
-  unboosted.
+- **The boost survives "next episode" transitions** on sites that swap the player without
+  reloading the page. It is not silently lost, and the video does not play unboosted while the
+  popup shows a level.
 
 ## 1.0.0 - 2026-06-17
 

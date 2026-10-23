@@ -1,4 +1,4 @@
-# Privacy Policy - Tab Volume Booster
+# Tab Volume Booster Privacy Policy
 
 _Last updated: 2026-09-24_
 
@@ -10,15 +10,15 @@ The extension only changes the audio volume of browser tabs you choose to adjust
 processing happens locally, in real time, on your device.
 
 ## Data the extension stores (on your device only)
-- **Per-tab settings** - the volume level, which method is in use (in-page hook or tab capture),
+- **Per-tab settings:** the volume level, which method is in use (in-page hook or tab capture),
   your "Prefer fullscreen" choice and, while the tab is on a site you saved a level for, which of
   those sites it is on (so that a reload is not mistaken for a new visit). Kept in Chrome's
   `session` storage and cleared when the tab or the browser is closed.
-- **Saved site levels** - for each site you pressed "save" on: the site's host name (for example
+- **Saved site levels:** for each site you pressed "save" on, the site's host name (for example
   `youtube.com`) and the level. Kept in Chrome's `local` storage until you press "forget" or
   "reset" on that site.
-- **Limiter on/off preference** - kept in Chrome's `local` storage.
-- **When the extension was last installed or updated** - one timestamp in Chrome's `local`
+- **Limiter on/off preference:** kept in Chrome's `local` storage.
+- **When the extension was last installed or updated:** one timestamp in Chrome's `local`
   storage, used only to recognize tabs that were already open at that moment.
 
 That's it. These settings never leave your browser, and they are used only to apply the volume

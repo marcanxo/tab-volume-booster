@@ -1,6 +1,6 @@
 # Translating Tab Volume Booster
 
-Adding a language is **one JSON file** - no code changes needed. Thank you for contributing!
+Adding a language is **one JSON file**, with no code changes needed. Thank you for contributing!
 
 ## How it works
 
@@ -10,30 +10,30 @@ The extension uses Chrome's built-in i18n system. Each language lives in:
 _locales/<locale-code>/messages.json
 ```
 
-Chrome picks the language automatically from the user's browser UI language and falls back to English (`_locales/en/`) for anything missing. (Users can't choose a language per extension - that's a Chrome limitation, not ours.)
+Chrome picks the language automatically from the user's browser UI language and falls back to English (`_locales/en/`) for anything missing. (Users can't choose a language per extension. Chrome does not offer that setting.)
 
 ## Adding a new language
 
 1. Find your locale code in [Chrome's supported locales list](https://developer.chrome.com/docs/extensions/reference/api/i18n#locales)
-   (e.g. `nl`, `sv`, `uk`, `ar`, `pt_PT`, `zh_TW` - note the underscore, not a dash).
+   (e.g. `nl`, `sv`, `uk`, `ar`, `pt_PT`, `zh_TW`, with an underscore, not a dash).
 2. Copy `_locales/en/messages.json` to `_locales/<your-code>/messages.json`.
 3. Translate **only the `"message"` values**. Don't change the keys.
-   The `"description"` fields are hints for you - you can keep or delete them.
+   The `"description"` fields are hints for you. You can keep or delete them.
 4. Open a pull request. That's it.
 
 ## Rules that keep the UI working
 
-- **`appDesc` must be ≤ 132 characters** - Chrome rejects the package otherwise.
+- **`appDesc` must be ≤ 132 characters.** Chrome rejects the package otherwise.
 - The popup is only **268px wide**: keep the status labels (`modeElement`, `modePaused`, `modeCapture`, `modeCaptureConflict`, `modeNone`) short, ideally under ~30 characters.
 - Keep numeric level forms exactly as-is: `1×`, `6x`, `1.0×` (Latin digits, same `×`), and keep the ` · ` separator where the English has it.
-- `fsLabel` is the visible name of the *Prefer fullscreen* toggle. Four messages quote that name (`pausedMsgConflict`, `pausedMsgPref`, `captureMsgConflict`, `modePausedTitlePref`) - the quoted text there must **exactly match your `fsLabel` translation**, in your language's own quotation marks.
+- `fsLabel` is the visible name of the *Prefer fullscreen* toggle. Four messages quote that name (`pausedMsgConflict`, `pausedMsgPref`, `captureMsgConflict`, `modePausedTitlePref`). The quoted text there must **exactly match your `fsLabel` translation**, in your language's own quotation marks.
 - `siteLabel` and `siteHintSaved` contain the placeholders `$HOST$` and `$LEVEL$`: the site's name and the saved level are filled in at runtime. Keep them exactly as written (uppercase, both dollar signs), put them wherever your grammar needs them, and copy the `placeholders` block of those two messages unchanged.
 - `siteSave` and `siteForget` sit on a tiny button next to the site's name, like `resetBtn`: keep them just as short.
 - Don't translate brand names: **Tab Volume Booster**, YouTube, Chrome.
 
 ## Improving an existing translation
 
-Native-speaker polish is always welcome - if something reads awkwardly in your language,
+Native-speaker polish is always welcome. If something reads awkwardly in your language,
 just edit the file for your language and open a PR describing what sounded off.
 
 ## Testing your translation locally
