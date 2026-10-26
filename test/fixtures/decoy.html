@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>decoy fixture</title>
+<style>
+  html, body { height: 100%; margin: 0; background: #000; }
+  video { width: 100%; height: 100%; display: block; }
+</style>
+</head>
+<body>
+<!-- The ad frame of decoy-host.html: one hookable blob video in the state the host asks for. The
+     runner can switch it to an ad from another origin (window.decoy.playAd). -->
+<video id="decoy" loop playsinline></video>
+<script>
+  (async () => {
+    const state = new URLSearchParams(location.search).get("state") || "muted";
+    const v = document.getElementById("decoy");
+    v.src = URL.createObjectURL(await (await fetch("/tone.wav")).blob());
+    v.muted = state !== "ready";
+    if (state === "mutedplaying") await v.play().catch(() => {});
+    else { v.preload = "auto"; v.load(); }
+    window.decoy = {
+      state: () => ({ paused: v.paused, muted: v.muted, readyState: v.readyState }),
+      // The frame's ad break: the video plays unmuted from `src` (another origin, no CORS).
+      playAd(src) { v.src = src; v.muted = false; v.volume = 1; return v.play().then(() => true, () => false); },
+      // Ownership probe as in x-feed.html: DESTRUCTIVE when it returns false.
+      isHooked() {
+        const c = new AudioContext();
+        try { c.createMediaElementSource(v).connect(c.destination); return false; }
+        catch (_) { c.close(); return true; }
+      },
+    };
+    window.decoyReady = true;
+  })();
+</script>
+</body>
+</html>

@@ -13,11 +13,17 @@
 // Per-tab state lives in chrome.storage.session: clears on browser close, wiped on tab close.
 // Levels the user saved for a site live in chrome.storage.local: this device, until forgotten.
 
+// The rule that names the element a tab's level belongs on, shared with every frame (select.js).
+importScripts("select.js");
+const select = globalThis.vbSelect;
+
 const TABGAIN = (id) => `tabgain:${id}`;   // number
 const TABMODE = (id) => `tabmode:${id}`;   // { mode:'element'|'capture'|'paused', frameId?, conflict? }
 const TABFS  = (id) => `tabfs:${id}`;      // bool: user prefers fullscreen over capture for this tab
 const TABHOST = (id) => `tabhost:${id}`;   // the saved site the tab is on (kept only while it is on one)
 const TABSEED = (id) => `tabseed:${id}`;   // true while the tab's level came from a saved site level, untouched since
+const TABHEARD = (id) => `tabheard:${id}`; // { at, doc }: when a probe last found a heard clip no hook can take, and in which top document
+const TABNOGRANT = (id) => `tabnogrant:${id}`; // true: a restore pass found no capture grant, until the popup opens
 const ACTIVE_KEY = "active";               // array of tabIds with a live CAPTURE graph
 const LIMITER_KEY = "useLimiter";          // storage.local, global pref
 const SITE = (host) => `site:${host}`;     // storage.local: the level saved for that site (number, never unity)
@@ -109,10 +115,11 @@ async function ensureOffscreen() {
 const toOffscreen = (m) => chrome.runtime.sendMessage({ target: "offscreen", ...m }).catch(() => {});
 
 // ---- content script ----
+// Resolves with the injection results (each with its frameId and documentId), or null.
 async function ensureContentScript(tabId) {
   try {
-    await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, files: ["content.js"] });
-  } catch (_) { /* some frames (chrome://, pdf viewer, store) can't be injected */ }
+    return await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, files: ["select.js", "content.js"] });
+  } catch (_) { return null; /* some frames (chrome://, pdf viewer, store) can't be injected */ }
 }
 const toFrame = (tabId, frameId, m) =>
   chrome.tabs.sendMessage(tabId, m, frameId != null ? { frameId } : undefined).catch(() => null);
@@ -122,6 +129,7 @@ const toFrame = (tabId, frameId, m) =>
 // stand down - the stop queues BEHIND the late engage in the frame's chain, so even a hook that
 // lands afterwards is unwound - and the engage counts as a refusal, never as a delivery failure.
 const ENGAGE_DEADLINE_MS = 10000;
+const ARM_DEADLINE_MS = 1000; // arm proves an AudioContext at most once per document, about 300 ms
 async function engageFrame(tabId, frameId, m) {
   m = { ...m, since: await installedAt() }; // lets the frame recognize a predecessor's leftover hook
   let timer;
@@ -135,7 +143,7 @@ async function engageFrame(tabId, frameId, m) {
 }
 
 // ---- probe: broadcast to frames, aggregate candidate reports, pick the best ----
-const probeWaiters = new Map(); // probeId -> { tabId, cands, timer }; keyed per-probe so two
+const probeWaiters = new Map(); // probeId -> { tabId, byFrame, timer }, keyed per-probe so two
 let probeSeq = 0;               //   concurrent probes for one tab (restore loop vs popup) can't clobber
 const restoring = new Map();    // tabId -> true|priorMode while an auto-restore loop is in flight
 const pendingRekick = new Set(); // tabIds whose element was swapped mid-restore → re-run once after
@@ -151,59 +159,84 @@ function serialized(tabId, fn) {
   tail.catch(() => {}).finally(() => { if (opChain.get(tabId) === tail) opChain.delete(tabId); });
   return tail;
 }
-// A candidate no in-page hook can ever take, however long we wait: DRM, a src that cannot be
-// parsed, or a PLAYING element with no URL at all (its media comes through srcObject as a stream;
-// a MediaSource handle is hookable and never gets here, see content.js assess) or from another
-// origin without CORS. Only consulted when no safe candidate exists anywhere (a safe one always
-// wins), so an ad playing over a hookable content player never counts: the probe reports the
-// player instead.
-function unhookableForGood(c) {
-  const k = c.cand;
-  if (!k.hasElement || k.safe) return false;
-  if (k.reason === "drm" || k.reason === "bad-url") return true;
-  return k.playing && (k.reason === "no-src" || k.reason === "cross-origin-no-cors");
+// A frame's candidate report comes out of the page's renderer, which a page that has broken into
+// it could write itself. So it is rebuilt field by field before any rule reads it: at most
+// CAND_MAX entries, every flag a boolean, every number finite (sizes never negative), a reason
+// content.js can give (anything else becomes "unknown"), safe only together with a safe reason,
+// and the frame set to the one that sent it.
+const CAND_MAX = 32;
+const SAFE_REASONS = new Set(["mse-handle", "blob", "same-origin", "cors-enabled"]);
+const UNSAFE_REASONS = new Set(["drm", "no-src", "bad-url", "cross-origin-no-cors", "cross-origin-redirect"]);
+const finite = (v) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+const extent = (v) => Math.max(0, finite(v));
+function candidatesFrom(raw, frameId) {
+  if (!Array.isArray(raw)) return null;
+  return raw.slice(0, CAND_MAX).map((c) => {
+    const k = c && typeof c === "object" ? c : {};
+    const reason = SAFE_REASONS.has(k.reason) || UNSAFE_REASONS.has(k.reason) ? k.reason : "unknown";
+    const r = k.rect && typeof k.rect === "object" ? k.rect : {};
+    return {
+      safe: !!k.safe && SAFE_REASONS.has(reason), reason,
+      playing: !!k.playing, ended: !!k.ended, audible: !!k.audible,
+      held: !!k.held, heard: !!k.heard, played: !!k.played, video: !!k.video,
+      area: extent(k.area),
+      rect: { x: finite(r.x), y: finite(r.y), w: extent(r.w), h: extent(r.h) },
+      frame: frameId,
+    };
+  });
 }
-function pickBest(cands) {
-  const safe = cands.filter((c) => c.cand.hasElement && c.cand.safe);
-  if (!safe.length) return null;
-  // Same order as content.js rankElements: playing, then AUDIBLE, then biggest. Across frames the
-  // audible check matters just as much - a big muted hero loop in the top frame must not beat the
-  // audible player in an iframe, or the boost lands on silence with a green pill over it (and no
-  // self-heal: the iframe is never armed, and every re-probe picks the loop again).
-  const rank = (c) => (c.cand.playing ? 2 : 0) + (c.cand.audible ? 1 : 0);
-  safe.sort((a, b) => rank(b) - rank(a) || b.cand.area - a.cand.area);
-  return safe[0]; // { frameId, cand }
+// What a probe found beyond the mode itself (heardUnhookable, the top document) steers only the
+// call that asked. The mode record keeps the mode.
+const modeRecord = ({ heardUnhookable, doc, ...rec }) => rec;
+// The moment a probe found a heard clip no hook can take, noted for the top document it found it
+// in (see keepsCapture). A tab that has closed meanwhile gets no note.
+async function noteHeard(tabId, doc) {
+  try {
+    await chrome.tabs.get(tabId);
+    await sset(TABHEARD(tabId), { at: Date.now(), doc });
+  } catch (_) {}
 }
 async function predictMode(tabId) {
-  await ensureContentScript(tabId);
+  const injected = await ensureContentScript(tabId);
+  const top = Array.isArray(injected) ? injected.find((r) => r && r.frameId === 0) : null;
+  const doc = top && typeof top.documentId === "string" ? top.documentId : null;
   return new Promise((resolve) => {
     const id = ++probeSeq;
-    const st = { tabId, cands: [] };
-    const settle = () => {
+    // byFrame: the latest report of each frame. A frame reports at once and, where a full walk of
+    // its page is in flight, once more when that walk is complete (content.js): the second report
+    // replaces the first, so nothing is counted twice.
+    const st = { tabId, byFrame: new Map() };
+    const settle = async () => {
       clearTimeout(st.timer);
       clearTimeout(st.grace);
-      probeWaiters.delete(id); // delete OUR entry only - never a concurrent probe's
-      const best = pickBest(st.cands);
-      // certain: the page's player is there and can only ever be reached by capture, so waiting
-      // for a hookable element (the restore loop's patience) cannot pay off.
-      resolve(best ? { mode: "element", frameId: best.frameId }
-                   : { mode: "capture", certain: st.cands.some(unhookableForGood) });
+      probeWaiters.delete(id); // delete OUR entry only, never a concurrent probe's
+      // The rule every frame applies to its own elements (select.js), over all frames' reports.
+      // certain: only capture can reach what plays, so waiting for a hookable element (the
+      // restore loop's patience) cannot pay off. heardUnhookable: a clip no hook can take, for a
+      // reason that can pass, sounded lately and stands apart from every hookable player of its
+      // frame. Such a clip in a feed can sound again (see the sticky capture in restoreAfterLoad).
+      // An ad laid over the content player or a hidden ad container does not count.
+      const cands = [...st.byFrame.values()].flat();
+      const c = select.choose(cands);
+      const heardUnhookable = cands.some((k) =>
+        !k.safe && k.heard && select.passing(k.reason) && select.standsApart(k, cands));
+      if (heardUnhookable && doc) await noteHeard(tabId, doc);
+      resolve(c.pick ? { mode: "element", frameId: c.pick.frame, heardUnhookable, doc }
+                     : { mode: "capture", certain: c.certain, heardUnhookable, doc });
     };
     probeWaiters.set(id, st);
     st.timer = setTimeout(settle, 350); // ceiling for pages whose frames answer slowly or not at all
     // Early-resolve, deliberately narrow: ONLY an audibly-playing safe element in the TOP frame may
     // settle the window early (after a 50ms grace for stragglers). Anything less - muted previews,
     // ad iframes, any sub-frame - waits the full 350ms exactly as before, because settling early on
-    // a fast small frame would EXCLUDE a slower main-player frame from pickBest entirely, and an
+    // a fast small frame would EXCLUDE a slower main-player frame from the choice entirely, and an
     // engage that then SUCCEEDS on the wrong frame is sticky (mode + frameId persist). A top-frame
     // audible playing element losing to a bigger audible iframe answering later is the one case this
     // trades away - two simultaneously audible players is pathological, and the old multi-frame area
     // bias is an accepted residual anyway. This keeps the fast path for the cases that matter
     // (YouTube, X: player in the top frame) at zero behavior change for iframe-player sites.
-    st.onCand = (frameId, cand) => {
-      // cand.substituted = a stand-in reported because the frame's top-ranked element is
-      // unhookable; it may win pickBest after the full window but must never shortcut it.
-      if (st.grace || frameId !== 0 || cand.substituted || !(cand.playing && cand.safe && cand.audible)) return;
+    st.onCand = (frameId, cands) => {
+      if (st.grace || frameId !== 0 || !cands.some((c) => c.playing && c.safe && c.audible)) return;
       st.grace = setTimeout(settle, 50);
     };
     chrome.tabs.sendMessage(tabId, { cmd: "probe" }).catch(() => {}); // broadcasts to all frames
@@ -213,6 +246,36 @@ async function predictMode(tabId) {
 const getMode = async (tabId) => (await sget(TABMODE(tabId))) || null;
 const setMode = (tabId, info) => sset(TABMODE(tabId), info);
 const clearMode = (tabId) => sdel(TABMODE(tabId));
+// True while a capture applies the tab's level. Both records are read: a restore pass clears the
+// mode while the capture keeps running, and the active list can miss a live graph for a moment
+// (see captureSetGain). A paused tab has no capture gain, so it does not count.
+async function captureHolds(tabId) {
+  const m = await getMode(tabId);
+  if (m && m.mode === "capture") return true;
+  return (await getActive()).includes(tabId);
+}
+// Sticky capture (see restoreAfterLoad): a probe that names a hookable element does not move the
+// tab off a capture that holds it while the page has a clip no hook can take that sounded lately
+// and stands apart (probe.heardUnhookable), or while a probe found one in the same top document
+// within HEARD_WINDOW_MS. A feed drops a clip's element soon after it scrolls away, and the clip's
+// heard flag goes with it: a quiet pass between two such clips would let the capture go, and the
+// next clip would start at native level until a new capture runs. A user who prefers fullscreen
+// is the exception: no capture runs for them, and element mode gives them both the level and
+// fullscreen.
+const HEARD_WINDOW_MS = 120000; // as long as content.js counts a clip as heard
+async function heardLately(tabId, probe) {
+  if (probe.heardUnhookable) return true;
+  const h = await sget(TABHEARD(tabId));
+  if (!h || !probe.doc) return false;
+  // A note from another document says nothing about this one: the tab has moved on.
+  if (h.doc !== probe.doc) { await sdel(TABHEARD(tabId)); return false; }
+  const age = Date.now() - h.at;
+  return age >= 0 && age <= HEARD_WINDOW_MS;
+}
+async function keepsCapture(tabId, probe) {
+  if ((await sget(TABFS(tabId))) === true || !(await heardLately(tabId, probe))) return false;
+  return captureHolds(tabId);
+}
 
 // ---- capture path gain control ----
 async function captureSetGain(tabId, gain, useLimiter) {
@@ -237,7 +300,15 @@ async function captureSetGain(tabId, gain, useLimiter) {
   await chrome.runtime
     .sendMessage({ target: "offscreen", cmd: "stop", tabId, immediate: true })
     .catch(() => null);
-  const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tabId });
+  // Without a grant for the tab (the popup was not opened on this page) no stream id is given, and
+  // Chrome says so: the extension "has not been invoked" for the page. Any other refusal (another
+  // capturer holds the tab, the tab has closed) says nothing about the grant.
+  let streamId;
+  try { streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tabId }); }
+  catch (e) {
+    const noGrant = /has not been invoked/.test(String((e && e.message) || e));
+    throw Object.assign(new Error(noGrant ? "no capture grant" : "no stream id"), { noGrant });
+  }
   // Marked BEFORE the start settles so a concurrent setGain routes into the acked-update path
   // (which retargets the in-flight start) instead of racing a second start. The start itself is
   // AWAITED: getUserMedia can fail asynchronously, and reporting 'capture' before the graph is
@@ -270,7 +341,9 @@ async function release(tabId) {
 // ---- once the in-page element hook is unavailable, decide CAPTURE vs PAUSED.
 // fsPriority is the per-tab user choice "I'd rather keep native fullscreen than boost via capture".
 // conflict = the element is already hooked by another app/page (the case we surface + explain).
-async function applyCaptureOrPause(tabId, gain, useLimiter, conflict, stale) {
+// pass: a restore pass asks, and a start that fails for lack of a grant is noted for the tab (see
+// restoreAfterLoad).
+async function applyCaptureOrPause(tabId, gain, useLimiter, conflict, stale, pass) {
   // stale: the element carries our PREVIOUS copy's hook (the tab was open across an update). Same
   // capture fallback as a conflict, but the popup explains it as that - reload the tab - instead
   // of blaming the page, and offers no fullscreen toggle.
@@ -291,7 +364,7 @@ async function applyCaptureOrPause(tabId, gain, useLimiter, conflict, stale) {
     const info = { mode: "capture", conflict: !!conflict, ...extra };
     await setMode(tabId, info);                          // …then record the mode, so it never lies
     return info;
-  } catch (_) {
+  } catch (e) {
     // Couldn't capture (e.g. the activeTab grant was revoked by a reload, or another app holds the
     // tab). Don't leave a 'capture' mode pointing at a graph that doesn't exist, and don't tell the
     // popup it's capturing - clear the mode and report 'none' so a later popup re-apply re-probes.
@@ -299,6 +372,14 @@ async function applyCaptureOrPause(tabId, gain, useLimiter, conflict, stale) {
     // runs this outside the per-tab queue, and a user action may have recorded a working element
     // hook meanwhile (its captureStop is what cancelled our start) - that record must stay.
     if (JSON.stringify(await getMode(tabId)) === before) await clearMode(tabId);
+    // Noted in the per-tab queue, for a tab that is still there: a tab that closes meanwhile has
+    // its cleanup run behind the note or before the check. A pass runs outside that queue, so this
+    // never waits on itself.
+    if (pass && e && e.noGrant) {
+      await serialized(tabId, async () => {
+        try { await chrome.tabs.get(tabId); await sset(TABNOGRANT(tabId), true); } catch (_) {}
+      });
+    }
     return { mode: "none", conflict: !!conflict, failed: true, ...extra };
   }
 }
@@ -314,7 +395,19 @@ async function setGain(tabId, gain, useLimiter) {
 
   let info = await getMode(tabId);
   const hadMode = !!info;
-  if (!info) { info = await predictMode(tabId); await setMode(tabId, info); }
+  if (!info) {
+    const probe = await predictMode(tabId);
+    // The sticky capture of restoreAfterLoad, for a slider move that lands while no mode is
+    // recorded (a restore pass has just cleared it): the capture keeps the tab, with the flags of
+    // the mode that pass started from.
+    if (probe.mode === "element" && (await keepsCapture(tabId, probe))) {
+      const p = restoring.get(tabId);
+      const pm = p && typeof p === "object" ? p : null;
+      return await applyCaptureOrPause(tabId, gain, useLimiter, !!(pm && pm.conflict), !!(pm && pm.stale));
+    }
+    info = modeRecord(probe);
+    await setMode(tabId, info);
+  }
 
   // Element mode preserves fullscreen AND boosts, so always prefer it when the probe allows.
   if (info.mode === "element") {
@@ -327,7 +420,7 @@ async function setGain(tabId, gain, useLimiter) {
       // Delivery failure (frame gone / no receiver) - NOT a refusal. The player may live in a
       // fresh frame now (SPA replaced its iframe), so re-probe once before abandoning element mode.
       await clearMode(tabId);
-      const fresh = await predictMode(tabId);
+      const fresh = modeRecord(await predictMode(tabId));
       await setMode(tabId, fresh);
       if (fresh.mode !== "element") return await applyCaptureOrPause(tabId, gain, useLimiter, false);
       // Retargeting to a different frame: make sure the old frame's hook (if any survived) is
@@ -335,6 +428,14 @@ async function setGain(tabId, gain, useLimiter) {
       if (fresh.frameId !== info.frameId) await toFrame(tabId, info.frameId, { cmd: "stop" });
       res = await engageFrame(tabId, fresh.frameId, { cmd: "engage", gain, useLimiter });
     }
+    // A user action never settles on a stand-in: the player the frame took waits behind a sounding
+    // element no hook can take (an ad without CORS), so the level would change nothing the user
+    // hears now, and only capture reaches that element. This counts as a refusal for that reason.
+    // A restore pass keeps the stand-in instead, and once the ad is over the content's own play
+    // signal starts a pass that moves the tab back to element mode. A stand-in in another frame
+    // (an ad frame over a top-frame player) is not visible to the frame's own rule: its engage
+    // answers without standIn, and a slider move there keeps element mode.
+    if (res && res.ok && res.standIn) return await applyCaptureOrPause(tabId, gain, useLimiter, false);
     if (res && res.ok) {
       // The tab may have been in CAPTURE mode before this probe picked element (a hookable player
       // appeared after a "next episode" swap): never leave the offscreen graph applying its gain
@@ -389,7 +490,7 @@ const ENGINE_REPORTS = new Set(["trackEnded", "captureFailed"]);
 function allowed(msg, sender) {
   if (POPUP_COMMANDS.has(msg.type)) return fromExtPage(sender, "popup.html");
   if (ENGINE_REPORTS.has(msg.type)) return fromExtPage(sender, "offscreen.html");
-  return !!(sender && sender.tab && sender.id === chrome.runtime.id); // page reports: frameCandidate, navigated, ...
+  return !!(sender && sender.tab && sender.id === chrome.runtime.id); // page reports: frameCandidates, navigated, ...
 }
 
 // A capture start failed in the engine (expired streamId, another capturer, …). The bookkeeping
@@ -404,15 +505,20 @@ function onCaptureFailed(tabId) {
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || msg.target === "offscreen") return; // not for us
   if (!allowed(msg, sender)) return;               // no answer at all: nothing to learn from it
+  // Opening the popup is what grants capture of the tab (activeTab), so any popup command lifts
+  // the note that a restore pass found no grant there.
+  if (POPUP_COMMANDS.has(msg.type) && Number.isInteger(msg.tabId)) sdel(TABNOGRANT(msg.tabId)).catch(() => {});
 
-  if (msg.type === "frameCandidate") {
+  if (msg.type === "frameCandidates") {
     const tabId = sender.tab && sender.tab.id;
-    if (tabId != null) {
-      // Fan out to every in-flight probe for this tab (there can be more than one).
+    const cands = tabId != null ? candidatesFrom(msg.cands, sender.frameId) : null;
+    if (cands) {
+      // Fan out to every in-flight probe for this tab (there can be more than one). A report that
+      // comes after its probe settled finds no waiter and is dropped.
       for (const st of probeWaiters.values()) {
         if (st.tabId === tabId) {
-          st.cands.push({ frameId: sender.frameId, cand: msg.cand });
-          if (st.onCand) st.onCand(sender.frameId, msg.cand);
+          st.byFrame.set(sender.frameId, cands);
+          if (st.onCand) st.onCand(sender.frameId, cands);
         }
       }
     }
@@ -434,6 +540,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       // No level any more: the frame was armed a moment before a release (the release's stop
       // overtook the arm) and has just hooked at the old level. Unwind it, record nothing.
       if (!isActiveGain(await sget(TABGAIN(tabId)))) { await toFrame(tabId, frameId, { cmd: "stop" }); return; }
+      // A capture applies the level to the whole tab, so a hook under it multiplies the two gains
+      // (2x plays at 4x). The hook goes back to unity and the capture stays. Moving the tab to
+      // element mode is the probe's call on the next restore pass, never this report's.
+      if (await captureHolds(tabId)) { await toFrame(tabId, frameId, { cmd: "stop" }); return; }
       if (!(await getMode(tabId))) await setMode(tabId, { mode: "element", frameId });
     });
     return;
@@ -528,6 +638,8 @@ chrome.tabs.onRemoved.addListener((tabId) => {
     await sdel(TABFS(tabId));
     await sdel(TABHOST(tabId));
     await sdel(TABSEED(tabId));
+    await sdel(TABHEARD(tabId));
+    await sdel(TABNOGRANT(tabId));
     await clearMode(tabId);
     await unmarkActive(tabId);
     toOffscreen({ cmd: "stop", tabId });
@@ -655,14 +767,39 @@ async function restoreAfterLoad(tabId, gain, useLimiter, prior) {
   // reports a hook it takes ('hooked'), so this one is tracked from then on. Choosing another
   // frame below parks it, as any retarget does.
   let armedTop = false;
-  const armTop = async () => {
+  // Checked and sent in the per-tab queue, so no user action can start a capture or release the
+  // level between the check and the arm (every release runs in that queue). No arm while a
+  // capture holds the tab: the armed frame would take the next player in-page and its gain would
+  // multiply with the capture gain. No arm either while another frame holds the element record:
+  // the top frame would become a second, untracked element frame. The arm itself is bounded, so
+  // a frame stuck in its command chain cannot hold the tab's queue.
+  const armTop = () => serialized(tabId, async () => {
     const level = await sget(TABGAIN(tabId));
-    if (!isActiveGain(level)) return;
+    if (!isActiveGain(level) || (await captureHolds(tabId))) return;
+    const m = await getMode(tabId);
+    if (m && m.mode === "element" && m.frameId !== 0) return;
     armedTop = true;
-    await toFrame(tabId, 0, { cmd: "arm", gain: level, useLimiter });
-    // A release is not queued with the restore, so its stop can reach the frame BEFORE this arm
-    // and leave the frame armed at the old level. Re-checked once the arm has landed.
-    if (!isActiveGain(await sget(TABGAIN(tabId)))) await toFrame(tabId, 0, { cmd: "stop" });
+    await Promise.race([
+      toFrame(tabId, 0, { cmd: "arm", gain: level, useLimiter }),
+      new Promise((r) => setTimeout(r, ARM_DEADLINE_MS)),
+    ]);
+  });
+  // A pass's capture start. One that fails for lack of a grant fails the same way in every later
+  // pass, until the popup is opened on the tab (the one thing that grants capture), and every
+  // attempt stops every frame (parked graphs drop to unity) and opens the offscreen document for
+  // nothing. So once a pass has noted that, the next ones skip the attempt (null) and go on as
+  // after a failed start: no mode, and the top frame armed where that path arms it. A user action
+  // always tries (setGain), and any popup command lifts the note.
+  // untracked: the frames the pass leaves without a record (the prior element frame, the frame
+  // the probe picked). A failed start disarms them with the stop it sends every frame first. A
+  // skip stops them itself, the top frame excepted: its arm reports every hook it takes, and its
+  // parked graphs keep the level.
+  const passCapture = async (level, conflict, stale, untracked) => {
+    if ((await sget(TABNOGRANT(tabId))) === true) {
+      for (const f of new Set(untracked || [])) if (Number.isInteger(f) && f !== 0) await toFrame(tabId, f, { cmd: "stop" });
+      return null;
+    }
+    return applyCaptureOrPause(tabId, level, useLimiter, conflict, stale, true);
   };
   // Armed BEFORE the first probe, not after it: on a fast load the player can start inside that
   // first probe window, and a frame armed a moment too late leaves exactly the startle this
@@ -678,7 +815,26 @@ async function restoreAfterLoad(tabId, gain, useLimiter, prior) {
     try { await chrome.tabs.get(tabId); } catch (_) { return; }
     const info = await predictMode(tabId); // re-injects content.js + non-destructive probe
     if (info.mode === "element") {
-      await setMode(tabId, info);
+      // Sticky capture. A capture holds the tab, and a clip no hook can take sounded lately in a
+      // place of its own: a feed that mixes hookable and unhookable clips. Moving the tab to
+      // element mode for the hookable clip that is playing would flip it back to capture at the
+      // next unhookable one, and every flip to capture plays that clip's start at native level.
+      // So the capture keeps the tab and carries the level for every clip, with the flags of the
+      // mode the pass started from. Without such media the move to element mode below stays (a
+      // hookable player after a "next episode" swap). A capture that cannot go on (an active-list
+      // entry without a graph, and no grant for a new one) keeps nothing: the element path below
+      // takes the clip.
+      if (await keepsCapture(tabId, info)) {
+        const conflict = !!(prior && prior.conflict), stale = !!(prior && prior.stale);
+        const r = await passCapture(g, conflict, stale);
+        if (r && r.mode === "capture") {
+          await reverifyGain(tabId, g, useLimiter, conflict, stale);
+          return;
+        }
+      }
+      // The element record is written only after the engage has taken the player. A refused
+      // engage leaves no record, so the end of the pass and a waiting popup never read element
+      // mode for a tab whose audio nothing adjusts.
       // The probe may have picked a DIFFERENT frame than before the swap: park the previous
       // frame's hook (if it survived) so it can't stay hot alongside the new one.
       if (prior && prior.mode === "element" && prior.frameId != null && prior.frameId !== info.frameId)
@@ -695,6 +851,7 @@ async function restoreAfterLoad(tabId, gain, useLimiter, prior) {
       if (!isActiveGain(g)) { await clearMode(tabId); return; }
       const res = await engageFrame(tabId, info.frameId, { cmd: "engage", gain: g, useLimiter });
       if (res && res.ok) {
+        await setMode(tabId, { mode: "element", frameId: info.frameId });
         // Same as setGain: a prior CAPTURE graph must not keep boosting under the new hook
         // (unconditional - the active list can miss a live graph, a stop without one is a no-op).
         await captureStop(tabId);
@@ -708,33 +865,29 @@ async function restoreAfterLoad(tabId, gain, useLimiter, prior) {
       }
       // 'already-hooked' = a conflict → resolve to capture/paused (honoring fsPriority) and stop.
       if (res && res.reason === "already-hooked") {
-        await applyCaptureOrPause(tabId, g, useLimiter, true);
-        await reverifyGain(tabId, g, useLimiter, true);
+        if (await passCapture(g, true, false, [prior && prior.frameId, info.frameId])) await reverifyGain(tabId, g, useLimiter, true);
         return;
       }
       // Our previous copy's leftover hook (the tab was open across an update): capture until the
       // tab reloads, explained as exactly that - not as a conflict with the page.
       if (res && res.reason === "stale-hook") {
-        await applyCaptureOrPause(tabId, g, useLimiter, false, true);
-        await reverifyGain(tabId, g, useLimiter, false, true);
+        if (await passCapture(g, false, true, [prior && prior.frameId, info.frameId])) await reverifyGain(tabId, g, useLimiter, false, true);
         return;
       }
       // The element can't be hooked safely (same-origin URL redirecting cross-origin), or its
       // one-shot hook was ours and is spent ('own-hook-lost'). Retrying can't change either -
       // fall back to capture (no conflict: nobody else owns the element), like setGain would.
       if (res && (res.reason === "cross-origin-redirect" || res.reason === "own-hook-lost")) {
-        await applyCaptureOrPause(tabId, g, useLimiter, false);
-        await reverifyGain(tabId, g, useLimiter, false);
+        if (await passCapture(g, false, false, [prior && prior.frameId, info.frameId])) await reverifyGain(tabId, g, useLimiter, false);
         return;
       }
-      // DRM (or an unparseable src) can't become hookable by waiting either. Without this,
-      // a DRM page holding one safe decoy element would keep predicting 'element' via the
-      // probe's substitution all 8 iterations - grinding probes and leaving a wrong mode
-      // record. ('cross-origin-no-cors' deliberately stays in the wait bucket: during an ad
-      // break that's a transient interloper and waiting is exactly right.)
+      // DRM (or an unparseable src) can't become hookable by waiting either. The probe calls
+      // such a page capture by itself, so this answer means the page changed between the probe
+      // and the engage. ('cross-origin-no-cors' deliberately stays in the wait bucket: the engage
+      // saw a sounding clip the probe did not, an ad interloper perhaps, and the next probe
+      // decides with that fact.)
       if (res && (res.reason === "drm" || res.reason === "bad-url")) {
-        await applyCaptureOrPause(tabId, g, useLimiter, false);
-        await reverifyGain(tabId, g, useLimiter, false);
+        if (await passCapture(g, false, false, [prior && prior.frameId, info.frameId])) await reverifyGain(tabId, g, useLimiter, false);
         return;
       }
       // 'suspended' (low-MEI: won't run without a gesture) can't improve by retrying. Clear the
@@ -758,8 +911,8 @@ async function restoreAfterLoad(tabId, gain, useLimiter, prior) {
       // start: a reload revokes the grant, and a new visit has none until the popup is opened)
       // and stop. Waiting could not change the answer, and a popup opened meanwhile would wait
       // on a restore that probes the page for many seconds before its own apply may run.
-      await applyCaptureOrPause(tabId, g, useLimiter, !!(prior && prior.conflict), false);
-      await reverifyGain(tabId, g, useLimiter, !!(prior && prior.conflict), false);
+      if (await passCapture(g, !!(prior && prior.conflict), false, [prior && prior.frameId]))
+        await reverifyGain(tabId, g, useLimiter, !!(prior && prior.conflict), false);
       // No capture running after all (no grant before the popup): the verdict may have been an
       // interloper's (an ad playing where the content will), so the top frame stays armed for a
       // hookable player that starts later. With a capture live, or the tab paused, nothing is armed.

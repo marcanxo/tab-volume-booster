@@ -3,6 +3,38 @@
 What each release brings, in plain terms. Versions match the ones published on the
 [Chrome Web Store](https://chromewebstore.google.com/detail/lcbedgoeigfomodfdiepidklaoplonii).
 
+## 1.2.3 - 2026-10-26
+
+- **Reddit and other players built from web components.** Many players keep their video inside a
+  web component: Reddit's feed, mux-player, media-chrome and similar. The extension finds these
+  players and adjusts them in the page, with fullscreen kept. A clip gets your level from its
+  first sound, whether it starts with a click, a key, the page's own autoplay or as the next clip
+  of a feed.
+- **Feeds that mix clips the extension can and cannot adjust in the page.** Some feeds serve part
+  of their clips from servers that do not allow adjusting them in the page (Reddit, 9GAG). Those
+  clips go through tab capture once you have opened the popup in that tab. While such clips keep
+  coming, the tab stays in capture mode, so every clip starts at your level and the tab does not
+  switch modes from clip to clip.
+- **Ad frames do not take the level.** A hidden ad video in a frame of its own (9GAG) does not
+  count as the page's player while the page's own clip plays. The popup shows capture mode, and
+  the level reaches what you hear.
+- **The slider works on an ad that plays.** When an ad plays that the extension cannot adjust in
+  the page, moving the slider adjusts it through tab capture. Once the video itself plays again,
+  the tab returns to fullscreen mode.
+- **A saved level reaches a video that already plays.** When the extension arrives on a page
+  whose video started first (a new YouTube tab, players that autoplay), it takes that video at
+  once. On TikTok this means a saved level applies without opening the popup. TikTok's own
+  loudness balancing between clips is then off in that tab.
+- **Clips you scroll back to.** A clip you return to in a feed plays at your level again. Paused
+  clips that wait in a feed cost no processing.
+- **Back-to-back clips.** A feed clip that starts a moment before the previous one stops gets your
+  level from its first sound.
+- **One level, never two.** The in-page adjustment and tab capture never apply at the same time,
+  so a level cannot multiply.
+- **Less background work.** Without the popup's permission for tab capture, the extension does not
+  try capture again and again. Pages built from web components are searched in small steps, so
+  scrolling stays smooth.
+
 ## 1.2.2 - 2026-09-30
 
 - **Security hardening.** Every part of the extension checks where a command comes from. The

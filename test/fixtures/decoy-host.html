@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>decoy host fixture</title>
+<style>
+  body { background: #0b1219; margin: 0; padding: 8px; }
+  #content { width: 560px; height: 315px; display: block; background: #000; }
+  iframe { border: 0; display: block; }
+  .offscreen { position: absolute; left: 0; top: -9765px; width: 480px; height: 480px; }
+  .tiny { width: 1px; height: 1px; }
+  .visible { width: 480px; height: 300px; margin-top: 8px; }
+</style>
+</head>
+<body>
+<!-- A feed page whose content player plays audibly from another origin without CORS, so only
+     capture reaches it. An ad frame on that origin holds a hookable blob video: muted and paused
+     (?state=muted), muted and playing (mutedplaying) or unmuted and paused (ready). The frame sits
+     far above the page, at 1x1 or in view (?decoy=offscreen|tiny|visible). ?content=muted starts
+     the content player muted. ?content=blob plays a hookable blob instead, and ?content=blobpaused
+     only loads it (unmuted, never played). The runner substitutes the ad origin. -->
+<video id="content" loop playsinline></video>
+<script>
+  (async () => {
+    const q = new URLSearchParams(location.search);
+    const AD = "__AD__";
+    const mode = q.get("content") || "";
+    const v = document.getElementById("content");
+    if (mode === "blob" || mode === "blobpaused") v.src = URL.createObjectURL(await (await fetch("/tone.wav")).blob());
+    else v.src = AD + "/content.wav";
+    if (mode === "muted") v.muted = true;
+    window.contentPaused = mode === "blobpaused";
+    if (window.contentPaused) { v.preload = "auto"; v.load(); }
+    else v.play().catch(() => {});
+    const f = document.createElement("iframe");
+    f.id = "inner";
+    f.className = q.get("decoy") || "offscreen";
+    f.src = AD + "/decoy.html?state=" + encodeURIComponent(q.get("state") || "muted");
+    document.body.appendChild(f);
+  })();
+</script>
+</body>
+</html>

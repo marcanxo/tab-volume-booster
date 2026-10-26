@@ -1,6 +1,6 @@
 # Tab Volume Booster Privacy Policy
 
-_Last updated: 2026-09-24_
+_Last updated: 2026-10-26_
 
 **Tab Volume Booster does not collect, transmit, share, or sell any personal data.** The few
 settings it keeps, listed below, stay on your device.
@@ -12,8 +12,10 @@ processing happens locally, in real time, on your device.
 ## Data the extension stores (on your device only)
 - **Per-tab settings:** the volume level, which method is in use (in-page hook or tab capture),
   your "Prefer fullscreen" choice and, while the tab is on a site you saved a level for, which of
-  those sites it is on (so that a reload is not mistaken for a new visit). Kept in Chrome's
-  `session` storage and cleared when the tab or the browser is closed.
+  those sites it is on (so that a reload is not mistaken for a new visit). It also notes when the
+  page last played a clip that only tab capture can adjust (tied to that page, not to its
+  address), and whether tab capture still waits for your permission from the popup. Kept in
+  Chrome's `session` storage and cleared when the tab or the browser is closed.
 - **Saved site levels:** for each site you pressed "save" on, the site's host name (for example
   `youtube.com`) and the level. Kept in Chrome's `local` storage until you press "forget" or
   "reset" on that site.

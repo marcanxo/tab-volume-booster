@@ -13,6 +13,7 @@ It's a *hybrid*: per tab it automatically picks the boosting method that preserv
 
 - **Boost _and_ reduce.** One centered slider: **1× = off** sits in the middle. Drag **right** to boost (up to **6×**), drag **left** to make it quieter (down to **0× = silent**). The whole left half is the quiet range with fine ~0.01 steps, so you can dial in something like `0.05×`. That suits ducking a backing track under a live instrument.
 - **Fullscreen preserved by default.** On YouTube, Twitch and most HTML5 sites it hooks the page's own media element, so native fullscreen keeps working while boosting.
+- **Players built from web components.** Reddit's feed, mux-player, media-chrome and other players that keep their video inside a web component are adjusted in the page as well, with fullscreen kept.
 - **Per-tab memory.** Each tab remembers its own level while it's open (including across YouTube's autoplay/next-video). Closing the tab forgets it. Nothing is shared between tabs.
 - **Save a level for a site (opt-in).** Press *save* in the popup and every new tab you open on that site starts at that level (see [Usage](#usage)). Saved levels stay on your device and are forgotten with one click.
 - **Survives reload.** After an F5 the level re-applies automatically, without reopening the popup (see [Notes](#notes--limits) for the exceptions).
@@ -21,7 +22,7 @@ It's a *hybrid*: per tab it automatically picks the boosting method that preserv
 - **Built-in limiter.** Tames distortion on hard boosts. The toggle is click-free.
 - **One-click reset** back to 1× (off), which also forgets a level saved for the site.
 - **Localized.** The popup ships in 14 languages, auto-selected from your browser's language. Adding another is a single JSON file, see [TRANSLATING.md](TRANSLATING.md).
-- **Private.** Nothing is uploaded: no analytics, no accounts, no third parties. Stored on your device only: each tab's level, the method in use and your fullscreen preference (forgotten when the tab closes), the levels you saved for sites, plus the limiter preference. (The one request it ever makes is a same-origin redirect check against the site you're on, see [Privacy](#privacy).)
+- **Private.** Nothing is uploaded: no analytics, no accounts, no third parties. Stored on your device only: each tab's level, the method in use, your fullscreen preference and two notes that steer the choice of method (all forgotten when the tab closes), the levels you saved for sites, plus the limiter preference. (The one request it ever makes is a same-origin redirect check against the site you're on, see [Privacy](#privacy).)
 
 ---
 
@@ -97,6 +98,7 @@ You can always install straight from source, no store needed (requires Chrome 11
 | `manifest.json` | MV3 manifest. |
 | `background.js` | Service worker / orchestrator: picks the mode per tab, routes gain, restores after reload/element-swap. |
 | `content.js` | The in-page (Fullscreen-mode) Web Audio hook, injected on demand. |
+| `select.js` | The rule that picks the element a tab's level belongs on, shared by the worker and every frame. |
 | `offscreen.js` + `offscreen.html` | The capture-mode audio engine (gain + limiter). |
 | `popup.html` + `popup.js` | The UI. |
 | `_locales/*/messages.json` | UI translations (Chrome i18n). |

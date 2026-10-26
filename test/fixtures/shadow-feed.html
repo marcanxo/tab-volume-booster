@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>shadow-feed fixture</title>
+<style>
+  body { background: #0b1416; color: #eee; font-family: sans-serif; margin: 0; padding: 20px; }
+  .post { margin: 0 auto 24px; max-width: 560px; }
+  .filler { display: none; }
+</style>
+</head>
+<body>
+<sf-topbar></sf-topbar>
+<div id="feed"></div>
+<script>
+  // Models the Reddit feed as measured on 2026-10-24: every player is a web component.
+  // A post holds an <sf-player> in the light DOM. Its <video> lives in the player's OPEN shadow
+  // root. The video exists from the upgrade on and enters the root when the player renders, a
+  // moment after insertion (async render, like Lit).
+  // Each player carries a 0x0 scrub-preview video four roots deep (sf-player > sf-media-ui >
+  // sf-progress > sf-preview), cross-origin, never played.
+  // Media events stay inside the root (composed:false) and nothing re-dispatches them, so the
+  // document never sees one: window.docMediaEvents counts media events that reach it.
+  // The page shell (sf-topbar) has an open root from the start, as Reddit's has thousands. A
+  // frame that has met no shadow root yet checks inserted subtrees the cheap way.
+  // Flags: ?root=closed (closed player roots), ?redispatch=1 (the host re-dispatches media events
+  // on itself, the custom-media-element pattern), ?posts=n (n idle posts on load, each with 35
+  // small open-root components and 150 light elements), ?auto=audible (one audible clip on
+  // load), ?auto=late&after=ms (the same, later), ?shell=0 (no page shell: the page has no open
+  // root and no undefined custom element until a player arrives), ?bulk=n (n hidden light
+  // elements on load).
+  // The runner drives it through window.feed.*, with the method names of x-feed.html where they
+  // mean the same.
+  (async function () {
+    const q = new URLSearchParams(location.search);
+    if (q.get("shell") === "0") document.querySelector("sf-topbar").remove();
+    const closed = q.get("root") === "closed";
+    const redispatch = q.get("redispatch") === "1";
+    const toneBlobUrl = URL.createObjectURL(await (await fetch("/tone.wav")).blob());
+    const crossUrl = (await (await fetch("/adsrc")).text()).trim(); // other origin, no CORS headers
+    let seq = 0;
+    const byId = new Map();     // video id -> video
+    const playerOf = new Map(); // video id -> the element that owns it (player or host)
+    window.docMediaEvents = 0;
+    for (const t of ["play", "playing", "volumechange", "timeupdate"])
+      document.addEventListener(t, (e) => { if (/^(VIDEO|AUDIO)$/.test(e.target.tagName)) window.docMediaEvents++; }, true);
+    // every shadow root this page has ever created
+    let rootsCreated = 0;
+    const attach = Element.prototype.attachShadow;
+    Element.prototype.attachShadow = function (init) { rootsCreated++; return attach.call(this, init); };
+
+    const srcFor = (kind) => kind === "cross" ? crossUrl : kind === "none" ? "" : toneBlobUrl;
+    const later = (fn) => Promise.resolve().then(() => Promise.resolve()).then(fn);
+
+    function makeVideo(o) {
+      const v = document.createElement("video");
+      v.id = "s" + (++seq);
+      byId.set(v.id, v);
+      v.loop = true;
+      v.playsInline = true;
+      v.muted = o.muted !== false;
+      v.volume = o.volume == null ? 1 : o.volume;
+      v.style.cssText = "width:100%;height:315px;background:#000;display:block";
+      const s = srcFor(o.src);
+      if (s) v.src = s;
+      v.addEventListener("play", () => { if (!v.__playedAt) v.__playedAt = Date.now(); });
+      return v;
+    }
+
+    class Topbar extends HTMLElement {
+      constructor() { super(); this.attachShadow({ mode: "open" }).innerHTML = "<nav><a>home</a><a>popular</a></nav>"; }
+    }
+    class Leaf extends HTMLElement {
+      constructor() { super(); this.attachShadow({ mode: "open" }).innerHTML = "<div><span></span><b></b></div>"; }
+    }
+    // A defined custom element without a root, the way frameworks use light-DOM components.
+    class Tag extends HTMLElement {}
+    // The chain down to the preview video: each level renders its child asynchronously.
+    class Chain extends HTMLElement {
+      constructor() { super(); this.attachShadow({ mode: "open" }); }
+      connectedCallback() {
+        if (this.__done) return;
+        this.__done = true;
+        later(() => {
+          if (this.next) this.shadowRoot.appendChild(document.createElement(this.next));
+          else {
+            const p = document.createElement("video");
+            p.preload = "none";
+            p.src = crossUrl + "?preview";
+            p.style.cssText = "width:0;height:0";
+            this.shadowRoot.appendChild(p);
+          }
+        });
+      }
+    }
+    class MediaUi extends Chain { constructor() { super(); this.next = "sf-progress"; } }
+    class Progress extends Chain { constructor() { super(); this.next = "sf-preview"; } }
+    class Preview extends Chain {}
+
+    // The player. Its options travel as a property set before the upgrade (see newPlayer).
+    class Player extends HTMLElement {
+      constructor() {
+        super();
+        this.opts = this.__opts || {};
+        this.root = this.attachShadow({ mode: closed ? "closed" : "open" });
+        this.video = makeVideo(this.opts);
+        playerOf.set(this.video.id, this);
+        if (redispatch) {
+          for (const t of ["play", "playing", "pause", "volumechange", "timeupdate"])
+            this.video.addEventListener(t, () => this.dispatchEvent(new Event(t)));
+        }
+      }
+      connectedCallback() {
+        if (this.__rendered) return;
+        this.__rendered = true;
+        const o = this.opts;
+        later(() => {
+          const box = document.createElement("div");
+          box.style.cssText = "position:relative;display:block";
+          const cover = document.createElement("div");
+          cover.style.cssText = "position:absolute;inset:0";
+          cover.addEventListener("click", () => {
+            const v = this.video;
+            v.muted = false; v.volume = 1;
+            if (v.paused) v.play().catch(() => {});
+          });
+          box.append(this.video, cover, document.createElement("sf-media-ui"));
+          // A player that renders a custom element defined nowhere (yet)
+          if (o.nested) box.appendChild(document.createElement("sf-never-" + (++seq)));
+          this.root.appendChild(box);
+          if (o.autoplay !== false && this.video.src) this.video.play().catch(() => {});
+        });
+      }
+    }
+    customElements.define("sf-topbar", Topbar);
+    customElements.define("x-leaf", Leaf);
+    customElements.define("sf-tag", Tag);
+    customElements.define("sf-media-ui", MediaUi);
+    customElements.define("sf-progress", Progress);
+    customElements.define("sf-preview", Preview);
+    customElements.define("sf-player", Player);
+
+    // document.createElement runs the constructor at once for a defined name, so the options are
+    // handed over through a prototype slot for the duration of the call.
+    function newPlayer(o, name) {
+      Player.prototype.__opts = o;
+      try { return document.createElement(name || "sf-player"); } finally { delete Player.prototype.__opts; }
+    }
+    // A post: optional light filler, optional small open-root components, then the player.
+    function postFor(p, o) {
+      const post = document.createElement("div");
+      post.className = "post";
+      if (o && o.filler) {
+        const f = document.createElement("div");
+        f.className = "filler";
+        for (let i = 0; i < o.filler; i++) f.appendChild(document.createElement(i % 10 ? "span" : "p"));
+        post.appendChild(f);
+      }
+      for (let i = 0; i < ((o && o.leaves) || 0); i++) post.appendChild(document.createElement("x-leaf"));
+      post.appendChild(p);
+      return post;
+    }
+    const feedEl = () => document.getElementById("feed");
+    const find = (id) => byId.get(id);
+    const postOf = (id) => { const p = playerOf.get(id); return p && p.closest(".post"); };
+    // Undefined players: inserted under a name nobody has defined yet.
+    const undefinedOpts = new Map(); // name -> options
+
+    window.feed = {
+      // one post (opts: muted, volume, src 'blob'|'cross'|'none', autoplay, leaves, filler, nested,
+      // bare: the player host goes straight into the feed, with no post around it)
+      add(o) {
+        const p = newPlayer(o || {});
+        feedEl().appendChild(o && o.bare ? p : postFor(p, o));
+        return p.video.id;
+      },
+      addAudible(o) { return window.feed.add(Object.assign({ muted: false }, o || {})); },
+      // n posts in ONE insertion, the way the feed loads its next page (o: the options of every
+      // post, or a list of them, one per post)
+      addBatch(n, o) {
+        const frag = document.createDocumentFragment();
+        const ids = [];
+        for (let i = 0; i < n; i++) {
+          const oi = (Array.isArray(o) ? o[i] : o) || {};
+          const p = newPlayer(oi);
+          frag.appendChild(postFor(p, oi));
+          ids.push(p.video.id);
+        }
+        feedEl().appendChild(frag);
+        return ids;
+      },
+      // A player one level deeper, the way mux-player wraps mux-video: the outer element renders
+      // the inner player into its own root after insertion.
+      addNested(o) {
+        const outer = document.createElement("div");
+        const root = outer.attachShadow({ mode: "open" });
+        const p = newPlayer(o || {});
+        feedEl().appendChild(postFor(outer));
+        setTimeout(() => root.appendChild(p), 30);
+        playerOf.set(p.video.id, p);
+        return p.video.id;
+      },
+      // A player inserted BEFORE its element is defined. The definition runs `after` ms later:
+      // the upgrade attaches the root and renders the video with no mutation record anywhere a
+      // document observer could see. Resolves with the video's id once defined.
+      addLate(o, after) {
+        const name = window.feed.addUndefined(o);
+        return new Promise((resolve) => setTimeout(() => resolve(window.feed.defineLate(name)), after || 300));
+      },
+      // The same, defined only by defineLate(name). tags: that many defined light-DOM custom
+      // elements without a root go first, in the same insertion.
+      addUndefined(o, tags) {
+        const name = "sf-late-" + (++seq);
+        undefinedOpts.set(name, o || {});
+        const post = postFor(document.createElement(name), o);
+        if (tags) {
+          const frag = document.createDocumentFragment();
+          const box = document.createElement("div");
+          for (let i = 0; i < tags; i++) box.appendChild(document.createElement("sf-tag"));
+          frag.append(box, post);
+          feedEl().appendChild(frag);
+        } else feedEl().appendChild(post);
+        return name;
+      },
+      defineLate(name) {
+        const o = undefinedOpts.get(name);
+        customElements.define(name, class extends Player { constructor() { Player.prototype.__opts = o; try { super(); } finally { delete Player.prototype.__opts; } } });
+        const el = document.querySelector(name);
+        return el && el.video ? el.video.id : null;
+      },
+      // n light-DOM custom elements under a name nobody has defined yet, in one insertion. The
+      // name is defined `after` ms later, as a component without a root.
+      addLateTags(n, after) {
+        const name = "sf-tags-" + (++seq);
+        const box = document.createElement("div");
+        for (let i = 0; i < n; i++) box.appendChild(document.createElement(name));
+        feedEl().appendChild(box);
+        setTimeout(() => customElements.define(name, class extends HTMLElement {}), after || 100);
+        return name;
+      },
+      // One insertion of `posts` light posts of `per` elements each, without media, then an
+      // optional iframe at its end whose page plays an audible clip of its own (tail "iframe"),
+      // or the same iframe inside the open root of a plain host (tail "rootframe").
+      addLight(posts, per, tail) {
+        const frag = document.createDocumentFragment();
+        for (let i = 0; i < posts; i++) {
+          const post = document.createElement("div");
+          post.className = "post";
+          for (let k = 0; k < per; k++) post.appendChild(document.createElement(k % 10 ? "span" : "p"));
+          frag.appendChild(post);
+        }
+        if (tail === "iframe" || tail === "rootframe") {
+          const post = document.createElement("div");
+          post.className = "post";
+          const f = document.createElement("iframe");
+          f.src = "/x-feed.html?auto=audible&tailframe=1";
+          f.style.cssText = "width:520px;height:400px;border:0;display:block";
+          if (tail === "rootframe") post.appendChild(document.createElement("div")).attachShadow({ mode: "open" }).appendChild(f);
+          else post.appendChild(f);
+          frag.appendChild(post);
+        }
+        feedEl().appendChild(frag);
+      },
+      // n hidden light elements in one block, before the feed or at the end of the page. Returns
+      // the block's id.
+      bulk(n, where) {
+        const box = document.createElement("div");
+        box.id = "bulk" + (++seq);
+        box.className = "filler";
+        for (let i = 0; i < n; i++) box.appendChild(document.createElement("span"));
+        if (where === "before") document.body.insertBefore(box, feedEl());
+        else document.body.appendChild(box);
+        return box.id;
+      },
+      // a custom element that is never defined
+      addNever() { const el = document.createElement("sf-never-" + (++seq)); feedEl().appendChild(postFor(el)); return el.localName; },
+      // A root with two media, built and started while detached: a paused clip first, then an
+      // audible one that already plays when the host is inserted.
+      async addPreplayed() {
+        const host = document.createElement("div");
+        const root = host.attachShadow({ mode: "open" });
+        const first = makeVideo({ muted: true });
+        const second = makeVideo({ muted: false });
+        root.append(first, second);
+        playerOf.set(first.id, host); playerOf.set(second.id, host);
+        await new Promise((r) => { second.addEventListener("playing", r, { once: true }); second.play().catch(() => {}); });
+        feedEl().appendChild(postFor(host));
+        return { first: first.id, second: second.id };
+      },
+      // An audible clip started while detached, then inserted as a leaf into the root of the
+      // player that holds `intoId`.
+      async insertPlaying(intoId) {
+        const target = find(intoId);
+        if (!target) return null;
+        const v = makeVideo({ muted: false });
+        playerOf.set(v.id, playerOf.get(intoId));
+        await new Promise((r) => { v.addEventListener("playing", r, { once: true }); v.play().catch(() => {}); });
+        target.parentNode.appendChild(v);
+        return v.id;
+      },
+      // One insertion of `hosts` posts, each a plain host whose open root holds `perHost`
+      // elements, then a paused unmuted player at its end (o: other options for that player).
+      // Returns the player's video id and the time the observers created before this call take
+      // for the insertion (callbackMs).
+      async addHeavy(hosts, perHost, o) {
+        const frag = document.createDocumentFragment();
+        const inner = "<i></i>".repeat(perHost);
+        for (let i = 0; i < hosts; i++) {
+          const h = document.createElement("div");
+          h.attachShadow({ mode: "open" }).innerHTML = inner;
+          frag.appendChild(postFor(h));
+        }
+        const p = newPlayer(Object.assign({ muted: false, autoplay: false }, o || {}));
+        frag.appendChild(postFor(p));
+        const ms = await window.feed.callbackMs(() => feedEl().appendChild(frag));
+        return { id: p.video.id, ms };
+      },
+      // Runs insert() and returns how long the mutation observers created before this call take
+      // for it. Observers are notified in the order they were created, so one created here runs
+      // right after all of them, in the same microtask.
+      callbackMs(insert) {
+        return new Promise((resolve) => {
+          let t1 = 0;
+          const mo = new MutationObserver(() => { mo.disconnect(); resolve(performance.now() - t1); });
+          mo.observe(feedEl(), { childList: true });
+          insert();
+          t1 = performance.now();
+        });
+      },
+      // Inserts `perRound` posts (35 small roots each), lets them render, unloads them again.
+      async churn(rounds, perRound) {
+        for (let k = 0; k < rounds; k++) {
+          const ids = window.feed.addBatch(perRound, { src: "none", autoplay: false, leaves: 35 });
+          await new Promise((r) => setTimeout(r, 60));
+          window.feed.unload(ids);
+          await new Promise((r) => setTimeout(r, 20));
+        }
+        return rootsCreated;
+      },
+      rootsCreated() { return rootsCreated; },
+      // the open roots the page holds
+      liveRoots() {
+        let n = 0;
+        const walk = (r) => { for (const e of r.querySelectorAll("*")) if (e.shadowRoot) { n++; walk(e.shadowRoot); } };
+        walk(document);
+        return n;
+      },
+      // lazy src, assigned inside the root like Reddit does ahead of the viewport
+      setSrc(id, kind) { const v = find(id); if (v) v.src = srcFor(kind); },
+      unmute(id, vol) { const v = find(id); if (v) { v.muted = false; v.volume = vol == null ? 1 : vol; } },
+      play(id) { const v = find(id); if (v) v.play().catch(() => {}); },
+      pause(id) { const v = find(id); if (v) v.pause(); },
+      // plays and pauses again inside its own 'play' event: sounds for a moment no probe sees
+      playOnce(id) {
+        const v = find(id);
+        if (!v) return;
+        v.addEventListener("play", () => v.pause(), { once: true });
+        v.play().catch(() => {});
+      },
+      // the whole post leaves the light DOM (batch unload far above the viewport)
+      remove(id) { const p = postOf(id); if (p) p.remove(); },
+      // the posts of these clips leave together, in one task
+      unload(ids) {
+        const posts = ids.map(postOf).filter(Boolean);
+        for (const p of posts) p.remove();
+        return posts.length;
+      },
+      // the player drops its video inside its own root: no light-DOM change at all
+      removeInRoot(id) { const v = find(id); if (v) v.remove(); },
+      // the same node moves into another player's root and keeps playing
+      moveTo(id, otherId) {
+        const v = find(id), o = find(otherId);
+        if (!v || !o) return false;
+        const playing = !v.paused;
+        o.parentNode.insertBefore(v, o);
+        if (playing) v.play().catch(() => {});
+        return true;
+      },
+      state(id) {
+        const v = find(id);
+        if (!v) return null;
+        return { paused: v.paused, ready: v.readyState, muted: v.muted, volume: v.volume, connected: v.isConnected, inRoot: v.getRootNode() !== document, src: !!v.src };
+      },
+      playedAt(id) { const v = find(id); return (v && v.__playedAt) || null; },
+      point(id) {
+        const v = find(id);
+        if (!v) return null;
+        v.scrollIntoView({ block: "center" });
+        const r = v.getBoundingClientRect();
+        return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+      },
+      // Ownership probe from the page. DESTRUCTIVE when it returns false (see x-feed.html).
+      isHooked(id) {
+        const v = find(id);
+        if (!v) return null;
+        const c = new (window.AudioContext || window.webkitAudioContext)();
+        try { c.createMediaElementSource(v).connect(c.destination); return false; }
+        catch (_) { c.close(); return true; }
+      },
+      // what the document can see on its own
+      lightMediaCount() { return document.querySelectorAll("video, audio").length; },
+    };
+    if (q.get("bulk")) window.feed.bulk(+q.get("bulk"));
+    if (q.get("posts")) {
+      const ids = window.feed.addBatch(+q.get("posts"), { src: "none", autoplay: false, leaves: 35, filler: 150 });
+      window.postsReady = ids.length;
+    }
+    if (q.get("auto") === "audible") window.autoId = window.feed.addAudible();
+    if (q.get("auto") === "late") setTimeout(() => { window.autoId = window.feed.addAudible(); }, +q.get("after") || 1500);
+    window.feedReady = true;
+  })();
+</script>
+</body>
+</html>

@@ -48,6 +48,15 @@
         if (v.paused) v.play();
       });
       v.addEventListener("play", () => { if (!v.__playedAt) v.__playedAt = Date.now(); });
+      // An ad laid over another post's video: inside that post, in the same box, on top.
+      if (o.over) {
+        v.dataset.overlay = "1";
+        v.style.cssText = "position:absolute;left:0;top:0";
+        o.over.style.position = "relative";
+        o.over.appendChild(v);
+        v.play().catch(() => {});
+        return v;
+      }
       post.appendChild(v);
       if (o.paused) v.autoplay = false; // makePost normally autoplays at the bottom; see there
       // Real feeds rarely put the click handler on the <video>: a transparent catcher sits on
@@ -167,16 +176,22 @@
         const r = v.getBoundingClientRect();
         return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
       },
-      // IMA-SDK-style ad break: pause the content video, overlay a SEPARATE audible ad
-      // element. crossOrigin:true serves the ad from another origin with no CORS headers -
-      // the case the extension can never hook in-page.
+      // IMA-SDK-style ad break: pause the content video and play a SEPARATE audible ad element
+      // over it, in the content post's own box, the way such SDKs lay their ad container over
+      // the content player. crossOrigin:true serves the ad from another origin with no CORS
+      // headers, the case the extension can never hook in-page. separate:true appends the ad as
+      // a post of its own instead (a feed's next clip, not an overlay). hideContent:true hides
+      // the content video for the break (display:none, so it has no box), as some players do.
+      // src:url plays the ad from that URL (a same-origin URL that redirects, say).
       async adStart(mainId, opts) {
         const o = opts || {};
         window.feed.pause(mainId);
-        let src;
+        let src = o.src;
         if (o.crossOrigin) src = (await (await fetch("/adsrc")).text()).trim();
-        const ad = makePost({ muted: false, src });
-        return ad.id;
+        const main = find(mainId);
+        const over = !o.separate && main && main.closest(".post");
+        if (over && o.hideContent) main.style.display = "none";
+        return makePost({ muted: false, src, over }).id;
       },
       // add a playing post with an EXPLICIT src (same-origin file, or a same-origin URL that
       // redirects cross-origin) - the blob: posts above never exercise the redirect probe.
@@ -229,11 +244,14 @@
         await v.setMediaKeys(mk);
         return !!v.mediaKeys;
       },
-      // ad break ends: ad element is torn down, content resumes
+      // ad break ends: the ad element is torn down (an overlay alone, a separate ad with its
+      // post), the content shows again and resumes
       adEnd(adId, mainId) {
-        window.feed.remove(adId);
+        const ad = find(adId);
+        if (ad && ad.dataset.overlay) ad.remove();
+        else window.feed.remove(adId);
         const main = find(mainId);
-        if (main) { main.muted = false; main.volume = 1; main.play(); }
+        if (main) { main.style.display = ""; main.muted = false; main.volume = 1; main.play(); }
       }
     };
     // ?auto=audible: add an audibly playing post on load, for scenarios that must not run any
