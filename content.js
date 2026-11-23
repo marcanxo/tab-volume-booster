@@ -582,6 +582,7 @@
 
   let warmedTotal = 0;              // distinct srcs this frame has ever probed (see the probe handler)
   const WARM_TOTAL_MAX = 8;
+  const WARM_PROBE_MAX = 2;         // new redirect checks one probe starts, both its reports together
   const REPORT_MAX = 32;            // candidates per probe report, all the worker reads (CAND_MAX)
 
   const MEDIA_TAGS = /^(IFRAME|VIDEO|AUDIO)$/;
@@ -597,7 +598,8 @@
   // every Reddit clip, mux-player, media-chrome). Document queries, observers and listeners do
   // not reach in there, and media events are not composed, so they never leave the root.
   // Every open root this frame meets is therefore registered once: swapMo observes it like the
-  // document, and a root that holds media gets the same capture listeners the document has.
+  // document, it gets the load listener for lazy iframes, and a root that holds media gets the
+  // media listeners the document has.
   // Observer callbacks cost what changes: one observer serves every root, and an added subtree is
   // walked once. A full walk of the page costs what the page holds, about 25 ms per 62,500
   // elements and 50 ms per 120,000 at 1x CPU, garbage collection of the wrappers it creates in
@@ -634,11 +636,14 @@
 
   // swapMo observes the root like the document. A MutationObserver holds the nodes it observes
   // weakly, so observing every root a long feed creates and drops again keeps none of them alive.
+  // The root also gets the load listener for lazy iframes: the load event of a frame element
+  // inside a root does not reach the document (see onFrameLoad).
   function registerRoot(root) {
     if (dead || seenRoots.has(root)) return false;
     seenRoots.add(root);
     usesShadow = deepScan = true;
     try { swapMo.observe(root, SWAP_OPTS); } catch (_) {}
+    root.addEventListener("load", onFrameLoad, true);
     return true;
   }
   // The media listeners go on the element's own root, once per root: about 80 roots of about
@@ -1010,6 +1015,22 @@
   // changes nothing the observer above can see, but needs no signal from here: the tab's load
   // state covers sub-frame navigations, so the worker's tabs.onUpdated restore re-probes and
   // re-hooks on its own. Pinned by test s43.)
+  // An iframe with loading="lazy" is the exception. Chrome starts its document when the frame is
+  // scrolled near, which changes nothing the observer above sees, and the tab's load state does
+  // not report it (no tabs.onUpdated event, measured on Chrome 152, 156 and 157, 2026-11-21).
+  // The worker sends no script to such a frame while it waits, so its new document runs none and
+  // a player in it signals nothing. The frame element's own load event is the one sign there is.
+  // It does not bubble and does not leave the tree it fires in: a capture listener on the
+  // document hears it for the frames of the light DOM, and one on a shadow root for the frames
+  // inside that root. So the listener sits on the document and on every root this frame
+  // registers (registerRoot). In a tab with a level the ping brings a pass, and the injection of
+  // that pass reaches the new document.
+  function onFrameLoad(e) {
+    const t = e.target;
+    if (!t || t.tagName !== "IFRAME" || t.loading !== "lazy" || checkOrphaned()) return;
+    pingNavigated();
+  }
+  document.addEventListener("load", onFrameLoad, true);
   // Unmutes are INVISIBLE to the observer above: muted/volume are properties, not attributes.
   // volumechange doesn't bubble, but a CAPTURE listener on an ancestor still sees it - one
   // document-level listener covers every media element, present or future. Urgent only when the
@@ -1050,10 +1071,22 @@
   // One blind spot remains: a player told to play BEFORE its stream is attached. Its 'play'
   // fires with nothing to hook, and a fresh element stays unpaused through the attachment, so no
   // second 'play' ever comes - only 'playing' marks the real start (measured: live-stream players
-  // do this). So 'playing' is taken as the missed 'play' for exactly those elements, and for no
-  // other: every player with a source at 'play' was handled there, and a second signal for it
-  // would only run the restore again (a churn ping per muted autoplay clip, in the worst case).
+  // do this). So 'playing' is taken as the missed 'play' for exactly those elements and for the
+  // clips noted below, and for no other: every player with a source at 'play' was handled there,
+  // and a second signal for it would only run the restore again (a churn ping per muted autoplay
+  // clip, in the worst case).
   const sourcelessPlay = new WeakSet();
+  // A clip in a sub-frame, told to play before this script arrived and still without data: its
+  // 'play' went unheard here, and a probe finds it not playing yet. Its 'playing' is the first
+  // sign of it this frame gets, so it is taken as a missed play: once no command is in flight,
+  // and only where the clip sounds and is not the one this frame holds by then (an engage that
+  // came with the script may have taken it). Measured with a frame that navigates itself
+  // (Chrome 157, 2026-11-22): the pass at the end of that load sends the script into the new
+  // document a few ms after its player was started, the probe that follows reports the clip as
+  // not playing, and nothing else tells the worker once it plays. The top frame needs none of
+  // this: a pass arms it before it probes, and the arm takes such a clip (takeSounding).
+  const startedUnheard = new WeakSet();
+  if (window !== window.top) for (const el of document.querySelectorAll("video, audio")) if (!el.paused && !el.ended && el.readyState < 2) startedUnheard.add(el);
   const onPlay = (e, late) => {
     if (checkOrphaned() || !firstSight(e)) return;
     const el = e.target;
@@ -1066,6 +1099,11 @@
     if (!el.muted && el.volume > 0) sounded(el);
     if (el === S.el && armedGain != null) return; // our hook applies the level (a stopped frame's hook sits at unity)
     if (late) {
+      if (startedUnheard.has(el)) {
+        startedUnheard.delete(el);
+        takeMissed(new Set([el]), true);
+        return;
+      }
       if (!sourcelessPlay.has(el)) {
         if (refusedAt.has(el)) retryRefused(el); // its real start, a moment after a refused 'play'
         return;
@@ -1194,8 +1232,13 @@
   function adopt(el) {
     // Was this element hooked before and merely parked, or dormant (scrolled out and back)? Then
     // re-adopt its graph: a second createMediaElementSource on the same element throws.
+    // The graph leaves the parked list here, before the current hook is retired. Retiring sends
+    // every parked graph with a paused element to sleep, and a clip the user presses on is still
+    // paused in its pointerdown: its graph, woken a moment ago, would go dormant again.
     let node = null;
-    if (parkedAt(el) < 0) {
+    const at = parkedAt(el);
+    const back = at >= 0 ? unpark(at) : null;
+    if (!back) {
       dozePaused(); // only graphs whose element plays count below
       // Checked BEFORE creating the source node: createMediaElementSource reroutes the element
       // the moment it exists, so bailing after creating it would leave the element silent.
@@ -1210,7 +1253,7 @@
     if (node) {
       buildGraph(node, el, armedGain);
     } else {
-      const g = unpark(retired.findIndex((x) => x.el === el));
+      const g = back;
       S.ctx = g.ctx; S.src = g.src; S.gain = g.gain; S.limiter = g.limiter; S.analyser = g.analyser; S.el = g.el;
     }
     // Set, not ramped: the element is silent right now, so there is nothing to glide from, and a
@@ -1575,25 +1618,27 @@
   // applies the rule over all frames' reports. Frames with no element stay silent, except in the
   // second report of a probe (always): the worker keeps the latest report of each frame, so an
   // empty one replaces a first report whose elements have left the page since.
-  function reportCandidates(given, always) {
-    if (dead) return;
+  // spent: the new redirect checks the first report of the same probe started. Returns that
+  // count with this report's own added.
+  function reportCandidates(given, always, spent) {
+    let warmed = spent || 0;
+    if (dead) return warmed;
     const ranked = describe(given);
-    if (!ranked.length && !always) return;
+    if (!ranked.length && !always) return warmed;
     // Warm the redirect check now (fire-and-forget) so a following engage hits the cache.
     // EVERY safe same-origin candidate, not just the winner: the element the user ends up on
     // is often not today's top pick (an ad interloper outranks it, or they click a different
     // post), and a cold verdict costs the engage the probe's full wait.
-    // Bounded at 2 new REQUESTS per report, so 4 for a probe that also gets the report of a
-    // completed walk (not candidate slots: counting cache hits would let the top picks
-    // permanently consume the budget and never warm the rest) AND at WARM_TOTAL_MAX distinct srcs
-    // for this frame's lifetime, since probes are frequent (every popup open, every setGain, once
-    // per restore iteration) and a per-report cap alone would still walk a long gallery. Media
-    // the page has not started loading is skipped entirely: a preload="none" gallery would
-    // otherwise get credentialed range requests for clips the user never played, which the site
-    // may count as views.
-    let warmed = 0;
+    // Bounded at WARM_PROBE_MAX new REQUESTS per probe, its first report and the report of a
+    // completed walk counted together (not candidate slots: counting cache hits would let the
+    // top picks permanently consume the budget and never warm the rest) AND at WARM_TOTAL_MAX
+    // distinct srcs for this frame's lifetime, since probes are frequent (every popup open, every
+    // setGain, once per restore iteration) and a per-probe cap alone would still walk a long
+    // gallery. Media the page has not started loading is skipped entirely: a preload="none"
+    // gallery would otherwise get credentialed range requests for clips the user never played,
+    // which the site may count as views.
     for (const s of ranked) {
-      if (warmed >= 2 || warmedTotal >= WARM_TOTAL_MAX) break;
+      if (warmed >= WARM_PROBE_MAX || warmedTotal >= WARM_TOTAL_MAX) break;
       const src = s.el.currentSrc;
       if (!src || (s.el.paused && s.el.readyState < 2)) continue;
       const sa = assess(s.el);
@@ -1612,6 +1657,7 @@
       const cands = ranked.filter((d) => sent.has(d)).map(({ el, ...d }) => d);
       chrome.runtime.sendMessage({ type: "frameCandidates", cands });
     } catch (_) {}
+    return warmed;
   }
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
@@ -1623,10 +1669,10 @@
       // worker waits 350 ms for reports, and on a page busy with its own tasks a report held for
       // a walk misses that window. A full walk in flight, or one due and started here, reports
       // once more when it is complete. The worker keeps the latest report of each frame and drops
-      // one that comes after its window.
+      // one that comes after its window. Both reports draw on one allowance of redirect checks.
       const { w, els } = dueWalk();
-      reportCandidates(els);
-      if (w) w.waiters.push(() => reportCandidates(null, true));
+      const warmed = reportCandidates(els);
+      if (w) w.waiters.push(() => reportCandidates(null, true, warmed));
       return;
     }
 

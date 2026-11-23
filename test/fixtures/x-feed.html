@@ -260,6 +260,8 @@
     if (new URLSearchParams(location.search).get("auto") === "audible") window.feed.addAudible();
     // a player that attaches well after the load, like a slow site's
     if (new URLSearchParams(location.search).get("auto") === "late") setTimeout(() => window.feed.addAudible(), +new URLSearchParams(location.search).get("after") || 1500);
+    // a post told to play 1.5 s before its media arrives, like a player on a slow line
+    if (new URLSearchParams(location.search).get("auto") === "slowstart") window.feed.addSrc("/late.wav?ms=1500&t=" + Date.now());
     // a live-stream style player: plays through srcObject, no URL anywhere (live-stream players
     // hand the element a MediaSource handle; a stream is the stand-in the fixture can build)
     // a live-stream player the way such sites build one: MSE in a dedicated worker, handed to the

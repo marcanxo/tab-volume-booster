@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>late frame fixture</title>
+<style>
+  body { background: #0b1219; margin: 0; padding: 8px; }
+  video { width: 560px; height: 315px; display: block; background: #000; }
+  iframe { width: 620px; height: 420px; border: 0; display: block; margin-top: 8px; }
+  .far { height: 6000px; }
+</style>
+</head>
+<body>
+<!-- A page with a frame whose document is not there yet. By default that is an iframe with
+     loading="lazy" 6000 px below the fold, which Chrome leaves unloaded until it is scrolled
+     near. ?lazy=player loads a feed with an audible post into it, ?lazy=xplayer the same from
+     another site, and ?second=1 adds a second lazy iframe 6000 px further down. ?late=open makes
+     it a frame whose server never finishes its response, ?late=silent one whose server never
+     answers (?fill=1: the page puts a paragraph into the empty document that frame starts with),
+     ?late=none leaves it out. ?shadow=1 puts the frame into an open shadow root.
+     ?eager=1 puts a feed with an audible post into a frame at the top of the page, ?eager=x the
+     same from another site, ?eager=plain a feed without a post, ?eager=slow a feed with a post
+     from a server that answers after a second. ?clip=1 plays a hookable clip in the top
+     document. ?written=dom|write|srcdoc adds a frame without an address that holds a playing
+     clip: the page fills its about:blank document node by node, writes it with document.write,
+     or hands it over as srcdoc.
+     ?hold=ms ends the body with a script the server answers only after that long (?hold=open:
+     never, ?hold=gate: once /open-gate is asked for), so the top document is still loading
+     meanwhile. The frames come before that script: they exist while it holds the parser. The
+     runner fills in the frames and the script. -->
+__EAGER__
+<div class="far"></div>
+__LATE__
+<script>
+  const query = new URLSearchParams(location.search);
+  const tone = async () => URL.createObjectURL(await (await fetch("/tone.wav")).blob());
+  const size = "width:560px;height:315px;display:block;background:#000";
+  if (query.get("fill") === "1") {
+    const d = document.getElementById("late").contentDocument;
+    d.body.appendChild(d.createElement("p")).textContent = "put here by the page";
+  }
+  (async () => {
+    if (query.get("clip") !== "1") return;
+    const v = document.createElement("video");
+    v.id = "clip";
+    v.loop = true;
+    v.playsInline = true;
+    v.src = await tone();
+    document.body.insertBefore(v, document.body.firstChild);
+    v.play().catch(() => {});
+  })();
+  (async () => {
+    const kind = query.get("written");
+    if (!kind) return;
+    const f = document.createElement("iframe");
+    f.id = "written";
+    // The markup of the player for the two kinds that take markup. It fetches the tone itself.
+    const player = `<video id="v" loop playsinline style="${size}"></video><script>(async () => { const v = document.getElementById("v"); ` +
+      `v.src = URL.createObjectURL(await (await fetch("/tone.wav")).blob()); v.play().catch(() => {}); })();</scr` + `ipt>`;
+    if (kind === "srcdoc") f.srcdoc = player;
+    document.body.insertBefore(f, document.body.firstChild);
+    const d = f.contentDocument;
+    if (kind === "write") { d.open(); d.write("<!doctype html>" + player); d.close(); }
+    if (kind === "dom") {
+      const v = d.createElement("video");
+      v.id = "v";
+      v.loop = true;
+      v.playsInline = true;
+      v.style.cssText = size;
+      v.src = await tone();
+      d.body.appendChild(v);
+      v.play().catch(() => {});
+    }
+  })();
+</script>
+__HOLD__
+</body>
+</html>

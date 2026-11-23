@@ -115,11 +115,219 @@ async function ensureOffscreen() {
 const toOffscreen = (m) => chrome.runtime.sendMessage({ target: "offscreen", ...m }).catch(() => {});
 
 // ---- content script ----
-// Resolves with the injection results (each with its frameId and documentId), or null.
-async function ensureContentScript(tabId) {
+// The script goes to one document at a time, once that document has loaded (no injectImmediately:
+// it must not run in a document that is still loading). Chrome holds such a call open until its
+// document gets there, so nothing waits for one without a limit. Measured on Chrome 152, 156 and
+// 157 with local pages (2026-11-22), the same on all three:
+// A function injected into all frames with injectImmediately answers for every frame, whatever
+// state its document is in: in 5 to 8 ms the first time on a page of four or five frames, in
+// 24 ms on one of twenty, and in about 2 ms from then on. One frame whose thread is busy holds
+// the whole answer back for as long as it is busy.
+// An injection aimed at a document that has loaded (target.documentIds) settles in 1 to 5 ms,
+// also while other frames of the page wait or are busy. Aimed at a document that is still loading
+// it settles once that document has loaded, the top document included.
+// Aimed at the empty about:blank document a frame starts with it stays open while the frame's own
+// document is still to come: an iframe with loading="lazy" below the viewport, a frame whose
+// server has not answered, a frame at javascript:false. It settles when the frame gets its
+// document, is written into or is removed, or when the tab closes. When the frame gets its
+// document, the call resolves and names the document it was sent to, and the new document comes
+// without the script: nothing the first document held goes over to it.
+// A document id that is gone rejects the whole call, and no other document named in that call
+// gets the script. One document that waits keeps the call open for all that are named with it,
+// so its settling says nothing about them. So every document has a call of its own.
+// A frame the page adds after its load changes nothing in the tab's load state (no
+// tabs.onUpdated event), and neither does a lazy iframe that loads. A frame that navigates
+// itself brings the events of a page load.
+//
+// ensureContentScript therefore reads every frame first (frameFacts) and sends the script by
+// what it finds.
+// A document that has the script gets nothing: a page whose frames all have it costs the read.
+// A lazy iframe that has not loaded gets nothing. Its parent document hears it load (content.js)
+// and asks for a pass, which finds the new document.
+// A sub-frame document that has loaded gets the script, and the call waits for it at most
+// INJECT_GRACE_MS.
+// A sub-frame document that is still loading, or an empty about:blank one, gets it as well, and
+// nothing waits for that: such a call can stay open for as long as the page lives.
+// The top frame is where the page itself lives, and a top document that is not ready is no
+// reason to decide early. Its injection is one per tab, awaited up to INJECT_TOP_DEADLINE_MS
+// from its start, and a call that finds it open past that has its answer at once.
+// The read itself is awaited for INJECT_GRACE_MS, one per tab. A call that goes on without it
+// answers from the top frame alone, and the read sends the script when it comes in.
+// Where the script may have reached a document that no probe has asked, the injection starts one
+// restore pass as it settles (a no-op in a tab without a level): one that settles after the
+// grace, one into a document that was still loading, one that a late read sent, and the
+// top-frame injection once a caller has given up on it. So does a read a user action went on
+// without. A pass that went on without it does not: a pass probes again by itself, and a page
+// with a frame that is often busy would keep passes running one after the other.
+// An injection into an empty about:blank document that settles with a result within the grace
+// starts no pass by that rule, and its script runs nowhere: the frame has its own document by
+// then, which came without one. Where the page added the frame, nothing else reports that
+// document, and the pass that sent the call may have ended at its first probe. So the frames are
+// read once more as such a call settles, and the script goes out as from a late read: the
+// document that came gets a call of its own, and that call starts the pass. A read started this
+// way starts no further one, and a call that was rejected reads nothing, so a frame that leaves
+// its empty document costs one read.
+// What stays in the worker's memory: per tab the open read, the open top-frame injection and one
+// record per document with an open injection. Each leaves when its call settles, so the records
+// are bounded by the documents of the pages Chrome holds for the tab, the one shown and those in
+// the back/forward cache, and a document is never sent a second call while its first is open.
+const INJECT_FILES = ["select.js", "content.js"];
+const INJECT_GRACE_MS = 250;
+const INJECT_TOP_DEADLINE_MS = 10000;
+const openReads = new Map();         // tabId -> the open read of the tab's frames: { p, at, done, res, left, asked }
+const openDocInjections = new Map(); // tabId -> Map(documentId -> its open injection: { p, at, done, res, kick })
+const openTopInjection = new Map();  // tabId -> the open injection into the top frame: { p, at, done, res, left }
+// Runs in every frame at once, also in a document that is still loading. It reads three facts
+// and changes nothing: the state of the document, whether the content script is in, and whether
+// the document is an about:blank one without content. wait is "lazy" for the first document of
+// an iframe with loading="lazy" whose own document is still to come, "empty" for any other
+// about:blank document with an empty body, "" otherwise. A document a script has filled is not
+// empty, whatever its address says (ad players live in such frames). An iframe whose src is
+// about:blank has no document to come, lazy or not (measured: Chrome does not hold it back), and
+// neither has one at a javascript: address.
+function frameFacts() {
+  let wait = "";
   try {
-    return await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, files: ["select.js", "content.js"] });
-  } catch (_) { return null; /* some frames (chrome://, pdf viewer, store) can't be injected */ }
+    if (location.href === "about:blank" && !(document.body && document.body.firstElementChild)) {
+      wait = "empty";
+      const el = window.frameElement;
+      const src = el ? (el.getAttribute("src") || "").trim() : "";
+      if (el && el.loading === "lazy" && (el.hasAttribute("srcdoc") || (src && !/^(about|javascript):/i.test(src)))) wait = "lazy";
+    }
+  } catch (_) {}
+  return { state: document.readyState, has: !!window.__VB_INIT__, wait };
+}
+// The id of the top document in a list of frames, or null.
+function topDocumentOf(results) {
+  const top = Array.isArray(results) ? results.find((r) => r && r.frameId === 0) : null;
+  return top && typeof top.documentId === "string" ? top.documentId : null;
+}
+// Resolves once p has settled, or after ms. The outcome is read from the call's record.
+const settledWithin = (p, ms) => new Promise((resolve) => {
+  const timer = setTimeout(resolve, Math.max(0, ms));
+  p.then(() => { clearTimeout(timer); resolve(); });
+});
+// The tab's open read of its frames, or a new one. res: the frames that answered with their
+// facts, or null where the page cannot be read (chrome://, the PDF viewer and the store reject).
+function readFrames(tabId) {
+  const open = openReads.get(tabId);
+  if (open) return open;
+  const rd = { at: performance.now(), done: false, res: null, left: false, asked: false };
+  rd.p = chrome.scripting.executeScript({ target: { tabId, allFrames: true }, injectImmediately: true, func: frameFacts })
+    .then((r) => r, () => null)
+    .then((r) => {
+      rd.done = true;
+      rd.res = Array.isArray(r)
+        ? r.filter((f) => f && Number.isInteger(f.frameId) && typeof f.documentId === "string" && f.result && typeof f.result.state === "string")
+        : null;
+      if (openReads.get(tabId) === rd) openReads.delete(tabId);
+      // Every caller has gone on without this read: the script goes out from here, and an
+      // injection into a document with content starts a pass when it settles.
+      if (!rd.left || !rd.res) return;
+      injectDocuments(tabId, rd.res, true);
+      if (rd.asked) kickRestore(tabId, true);
+    });
+  openReads.set(tabId, rd);
+  return rd;
+}
+// One injection for one document. kick: its settling starts a pass whenever it comes, as for a
+// document that was still loading and for one a late read sends. Any other starts one only when
+// it settles after the grace. empty: the document is an empty about:blank one, and a call that
+// settles within the grace reads the frames once more for the document that took its place.
+function injectDocument(tabId, documentId, kick, empty) {
+  const rec = { at: performance.now(), done: false, res: null, kick };
+  rec.p = chrome.scripting.executeScript({ target: { tabId, documentIds: [documentId] }, files: INJECT_FILES })
+    .then((r) => r, () => null)
+    .then((r) => {
+      rec.done = true;
+      rec.res = r;
+      const docs = openDocInjections.get(tabId);
+      if (docs && docs.get(documentId) === rec) docs.delete(documentId);
+      if (docs && !docs.size) openDocInjections.delete(tabId);
+      // A call rejected at once has reached nothing, its document is gone: no pass for that,
+      // and a document that rejected every time would keep passes running.
+      if (performance.now() - rec.at >= INJECT_GRACE_MS || (r && rec.kick)) kickRestore(tabId, true);
+      else if (r && empty) {
+        // The frame has left its empty document, and the one it has by this time runs no script.
+        // The read sends it one as a late read does, and that call starts the pass.
+        const rd = readFrames(tabId);
+        rd.p.then(() => { if (rd.res) injectDocuments(tabId, rd.res, true); });
+      }
+    });
+  if (!openDocInjections.has(tabId)) openDocInjections.set(tabId, new Map());
+  openDocInjections.get(tabId).set(documentId, rec);
+  return rec;
+}
+// Sends the script to the sub-frame documents of a read that lack it, each once: a document
+// with an open injection is not sent another. Returns the injections worth a short wait, those
+// into documents that have loaded. late: the read came in after its callers had gone on, or an
+// injection into an empty document started it as it settled. A late read starts no further
+// read, so one read follows a frame that leaves its empty document and none follows that one.
+function injectDocuments(tabId, frames, late) {
+  const waits = [];
+  for (const f of frames) {
+    const s = f.result;
+    if (f.frameId === 0 || s.has || s.wait === "lazy") continue;
+    const loaded = s.state !== "loading" && s.wait !== "empty";
+    const docs = openDocInjections.get(tabId);
+    const rec = (docs && docs.get(f.documentId)) || injectDocument(tabId, f.documentId, s.state === "loading" || (late && loaded), s.wait === "empty" && !late);
+    if (loaded) waits.push(rec);
+  }
+  return waits;
+}
+// The tab's open injection into its top frame, or a new one. One that is open waits for a top
+// document that is not ready, and a second call would wait for the same moment. left: a caller
+// gave up on it at the deadline.
+function injectTopFrame(tabId) {
+  const open = openTopInjection.get(tabId);
+  if (open) return open;
+  const top = { at: performance.now(), done: false, res: null, left: false };
+  top.p = chrome.scripting.executeScript({ target: { tabId, frameIds: [0] }, files: INJECT_FILES })
+    .then((r) => r, () => null)
+    .then((r) => {
+      top.done = true;
+      top.res = r;
+      if (openTopInjection.get(tabId) === top) openTopInjection.delete(tabId);
+      if (top.left) kickRestore(tabId, true);
+    });
+  openTopInjection.set(tabId, top);
+  return top;
+}
+// Resolves with the frames that have the script, each with its frameId and documentId, the top
+// frame among them, or with null where the page cannot be injected or its top document is not
+// ready within the deadline. inPass: a restore pass asks.
+async function ensureContentScript(tabId, inPass) {
+  let topRes = null;
+  for (let turn = 0; ; turn++) {
+    const rd = readFrames(tabId);
+    await settledWithin(rd.p, rd.at + INJECT_GRACE_MS - performance.now());
+    if (!rd.done) {
+      rd.left = true;
+      if (!inPass) rd.asked = true;
+    } else if (!rd.res) return null;
+    const frames = rd.done ? rd.res : [];
+    const waits = injectDocuments(tabId, frames, false);
+    const top = frames.find((f) => f.frameId === 0);
+    if (turn === 0 && !(top && top.result.has)) {
+      const t = injectTopFrame(tabId);
+      const from = performance.now();
+      await settledWithin(t.p, t.at + INJECT_TOP_DEADLINE_MS - from);
+      if (!t.done) t.left = true;
+      if (!t.res) return null;
+      topRes = t.res;
+      // After a long wait, or without a read, the frames are read once more: documents have
+      // loaded meanwhile, and the answer names what has the script by then.
+      if (!rd.done || performance.now() - from >= INJECT_GRACE_MS) continue;
+    }
+    for (const rec of waits) await settledWithin(rec.p, rec.at + INJECT_GRACE_MS - performance.now());
+    const have = new Map();
+    for (const f of frames) if (f.result.has) have.set(f.frameId, f.documentId);
+    for (const rec of waits) for (const r of (rec.done && rec.res) || []) have.set(r.frameId, r.documentId);
+    // The top-frame injection's answer counts for the document it reached. A read that shows
+    // another top document is newer: the tab has moved on, and that document has no script yet.
+    for (const r of topRes || []) if (!top || top.documentId === r.documentId) have.set(r.frameId, r.documentId);
+    return [...have].map(([frameId, documentId]) => ({ frameId, documentId }));
+  }
 }
 const toFrame = (tabId, frameId, m) =>
   chrome.tabs.sendMessage(tabId, m, frameId != null ? { frameId } : undefined).catch(() => null);
@@ -196,10 +404,8 @@ async function noteHeard(tabId, doc) {
     await sset(TABHEARD(tabId), { at: Date.now(), doc });
   } catch (_) {}
 }
-async function predictMode(tabId) {
-  const injected = await ensureContentScript(tabId);
-  const top = Array.isArray(injected) ? injected.find((r) => r && r.frameId === 0) : null;
-  const doc = top && typeof top.documentId === "string" ? top.documentId : null;
+async function predictMode(tabId, inPass) {
+  const doc = topDocumentOf(await ensureContentScript(tabId, inPass));
   return new Promise((resolve) => {
     const id = ++probeSeq;
     // byFrame: the latest report of each frame. A frame reports at once and, where a full walk of
@@ -804,7 +1010,7 @@ async function restoreAfterLoad(tabId, gain, useLimiter, prior) {
   // Armed BEFORE the first probe, not after it: on a fast load the player can start inside that
   // first probe window, and a frame armed a moment too late leaves exactly the startle this
   // exists to remove. Capture-bound tabs skip it: their first probe would only disarm again.
-  if (!priorCapture) { await ensureContentScript(tabId); await armTop(); }
+  if (!priorCapture) { await ensureContentScript(tabId, true); await armTop(); }
   for (let i = 0; i < RESTORE_ATTEMPTS; i++) {
     // Re-read the level EVERY iteration: the user may have released (→ abort) or moved the slider
     // (→ apply the new level, not the one captured when the restore started) mid-loop.
@@ -813,7 +1019,7 @@ async function restoreAfterLoad(tabId, gain, useLimiter, prior) {
     // The tab itself may have closed mid-loop (the serialized cleanup already ran): bail before
     // setMode/ensureOffscreen can recreate session keys or an idle offscreen doc for a dead tab.
     try { await chrome.tabs.get(tabId); } catch (_) { return; }
-    const info = await predictMode(tabId); // re-injects content.js + non-destructive probe
+    const info = await predictMode(tabId, true); // content script where it is missing, then the non-destructive probe
     if (info.mode === "element") {
       // Sticky capture. A capture holds the tab, and a clip no hook can take sounded lately in a
       // place of its own: a feed that mixes hookable and unhookable clips. Moving the tab to

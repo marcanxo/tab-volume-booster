@@ -1,6 +1,6 @@
 # Tab Volume Booster Privacy Policy
 
-_Last updated: 2026-10-26_
+_Last updated: 2026-11-23_
 
 **Tab Volume Booster does not collect, transmit, share, or sell any personal data.** The few
 settings it keeps, listed below, stay on your device.
@@ -12,10 +12,12 @@ processing happens locally, in real time, on your device.
 ## Data the extension stores (on your device only)
 - **Per-tab settings:** the volume level, which method is in use (in-page hook or tab capture),
   your "Prefer fullscreen" choice and, while the tab is on a site you saved a level for, which of
-  those sites it is on (so that a reload is not mistaken for a new visit). It also notes when the
-  page last played a clip that only tab capture can adjust (tied to that page, not to its
-  address), and whether tab capture still waits for your permission from the popup. Kept in
-  Chrome's `session` storage and cleared when the tab or the browser is closed.
+  those sites it is on (so that a reload is not mistaken for a new visit) and whether the tab's
+  level came from that saved level (so that it stays behind when the tab moves on to another
+  site). It also notes when the page last played a clip that only tab capture can adjust (tied to
+  that page, not to its address), and whether tab capture still waits for your permission from
+  the popup. Kept in Chrome's `session` storage and cleared when the tab or the browser is
+  closed.
 - **Saved site levels:** for each site you pressed "save" on, the site's host name (for example
   `youtube.com`) and the level. Kept in Chrome's `local` storage until you press "forget" or
   "reset" on that site.
@@ -44,9 +46,10 @@ is discarded immediately.
 
 The check runs when the extension is about to hook a media element, and ahead of time whenever
 it inspects a tab you have adjusted (opening the popup, moving the slider, re-applying the level
-after a reload or a player swap): at most two media files per inspection and eight per page
-load, only for same-origin media that has already started loading. A check that failed is
-repeated after 30 seconds at the earliest.
+after a reload or a player swap): at most two media files each time it looks at the page, which
+one of these actions can do more than once, and never more than eight per page load, counted in
+each frame of the page, only for same-origin media that has already started loading. A check
+that failed is repeated after 30 seconds at the earliest.
 
 The request goes to whichever origin is serving that media: the site you are on, or, for an
 embedded player, that player's own host. It is sent the way the page's own player would send it,

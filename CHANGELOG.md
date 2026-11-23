@@ -3,6 +3,19 @@
 What each release brings, in plain terms. Versions match the ones published on the
 [Chrome Web Store](https://chromewebstore.google.com/detail/lcbedgoeigfomodfdiepidklaoplonii).
 
+## 1.2.4 - 2026-11-23
+
+- **Pages with frames that load late.** Many pages hold a frame that loads only once you scroll
+  to it, and some hold one that never finishes loading. On such a page the popup does not stay on
+  "Checking…" with a slider that does nothing: the status appears, the slider works and a saved
+  level applies, without scrolling the frame into view first.
+- **Players inside frames that load late.** A player inside a frame that loads late gets your
+  level once its frame has loaded: a frame that loads only once you scroll to it, or one the page
+  adds later.
+- **Two redirect checks per look at a page.** The check that looks ahead for redirects asks for
+  at most two media files in each frame each time the extension looks at a page, as the privacy
+  policy says.
+
 ## 1.2.3 - 2026-10-26
 
 - **Reddit and other players built from web components.** Many players keep their video inside a
@@ -15,9 +28,9 @@ What each release brings, in plain terms. Versions match the ones published on t
   clips go through tab capture once you have opened the popup in that tab. While such clips keep
   coming, the tab stays in capture mode, so every clip starts at your level and the tab does not
   switch modes from clip to clip.
-- **Ad frames do not take the level.** A hidden ad video in a frame of its own (9GAG) does not
-  count as the page's player while the page's own clip plays. The popup shows capture mode, and
-  the level reaches what you hear.
+- **Ad frames do not take the level while a clip plays.** A hidden ad video in a frame of its own
+  (9GAG) does not count as the page's player while the page's own clip plays. The popup shows
+  capture mode, and the level reaches what you hear.
 - **The slider works on an ad that plays.** When an ad plays that the extension cannot adjust in
   the page, moving the slider adjusts it through tab capture. Once the video itself plays again,
   the tab returns to fullscreen mode.

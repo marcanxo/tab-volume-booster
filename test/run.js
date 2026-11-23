@@ -17,7 +17,9 @@ const CHROME = (() => {
   const root = path.join(__dirname, ".browsers", "chrome");
   if (fs.existsSync(root)) {
     // Newest build first: an older cached build must never win by directory order.
-    const dirs = fs.readdirSync(root).sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
+    // TVB_CHROME_BUILD=152 runs the cached build whose folder name contains that text instead.
+    const pick = process.env.TVB_CHROME_BUILD || "";
+    const dirs = fs.readdirSync(root).filter((d) => d.includes(pick)).sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
     for (const d of dirs) {
       const exe = path.join(root, d, "chrome-win64", "chrome.exe");
       if (fs.existsSync(exe)) return exe;
@@ -65,6 +67,8 @@ function serveFixtures() {
   // bytes=0-0 is the redirect probe's signature; media elements request open-ended ranges, so
   // counting only this keeps a looping <video> re-fetch from being charged to the extension.
   const counts = {};
+  const lateSeen = new Set(); // addresses /late.wav has answered slowly once
+  let openGate = null;        // answers the /hold.js?ms=gate request that waits, if one does
   const server = http.createServer(async (req, res) => {
     const p = req.url.split("?")[0];
     if (req.headers.range === "bytes=0-0") counts[p] = (counts[p] || 0) + 1;
@@ -114,6 +118,78 @@ function serveFixtures() {
       res.writeHead(200, { "Content-Type": "text/html" });
       return res.end(html);
     }
+    // Host page for the scenarios with a frame that loads late or never (s105). Which frames it
+    // holds, and whether a script holds its parser, depends on the query, so they are put in here.
+    if (p === "/lazy-host.html") {
+      const q = new URL(req.url, "http://127.0.0.1").searchParams;
+      // localhost is another site than 127.0.0.1: a frame from there runs in a process of its own.
+      const inner = { 1: "/x-feed.html?auto=audible&amp;eager", x: `http://localhost:${server.address().port}/x-feed.html?auto=audible&amp;eager`,
+        plain: "/x-feed.html?plain&amp;eager", slow: "/slow-feed.html?ms=1000&amp;auto=audible&amp;eager" }[q.get("eager")];
+      const eager = inner ? `<iframe id="inner" src="${inner}"></iframe>` : "";
+      let late = q.get("late") === "open" ? '<iframe id="late" src="/open-frame.html"></iframe>'
+        : q.get("late") === "silent" ? '<iframe id="late" src="/silent-frame.html"></iframe>'
+        : q.get("late") === "none" ? ""
+        : `<iframe id="late" loading="lazy" src="${q.get("lazy") === "xplayer" ? `http://localhost:${server.address().port}` : ""}/x-feed.html?${q.get("lazy") ? "auto=audible&amp;" : ""}late"></iframe>`;
+      if (q.get("second") === "1") late += '<div class="far"></div><iframe id="late2" loading="lazy" src="/x-feed.html?second"></iframe>';
+      // ?shadow=1: the late frame sits inside an open shadow root, which the parser attaches.
+      if (q.get("shadow") === "1") late = `<div id="shell"><template shadowrootmode="open"><style>iframe { width: 620px; height: 420px; border: 0; display: block; }</style>${late}</template></div>`;
+      const hold = q.get("hold") ? `<script src="/hold.js?ms=${encodeURIComponent(q.get("hold"))}"></script>` : "";
+      const html = fs.readFileSync(path.join(__dirname, "fixtures", "lazy-host.html"), "utf8")
+        .replace("__EAGER__", eager).replace("__LATE__", late).replace("__HOLD__", hold);
+      res.writeHead(200, { "Content-Type": "text/html" });
+      return res.end(html);
+    }
+    // A document whose response never ends: its first bytes arrive, the rest never does.
+    if (p === "/open-frame.html") {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.write("<!doctype html><title>open frame</title><p>start</p>" + " ".repeat(2048));
+      return;
+    }
+    // A document whose server never answers: its frame stays on the empty document it starts with.
+    if (p === "/silent-frame.html") return;
+    // The feed fixture from a slow server: answered after ?ms, and with ?hold its parser then
+    // waits that long for a script at its end, so the document has started and is still loading.
+    if (p === "/slow-feed.html") {
+      const q = new URL(req.url, "http://127.0.0.1").searchParams;
+      await sleep(+q.get("ms") || 0);
+      let html = fs.readFileSync(path.join(__dirname, "fixtures", "x-feed.html"), "utf8");
+      if (q.get("hold")) html = html.replace("</body>", `<script src="/hold.js?ms=${encodeURIComponent(q.get("hold"))}"></script></body>`);
+      res.writeHead(200, { "Content-Type": "text/html", "Cache-Control": "no-store" });
+      return res.end(html);
+    }
+    // A script answered only after ?ms (never for ?ms=open, and for ?ms=gate once a request for
+    // /open-gate comes in): it holds the parser of the page that includes it.
+    if (p === "/hold.js") {
+      const ms = new URL(req.url, "http://127.0.0.1").searchParams.get("ms");
+      if (ms === "open") return;
+      if (ms === "gate") await new Promise((r) => { openGate = r; });
+      else await sleep(+ms || 0);
+      res.writeHead(200, { "Content-Type": "text/javascript", "Cache-Control": "no-store" });
+      return res.end("window.held = true;");
+    }
+    if (p === "/open-gate") {
+      if (openGate) openGate();
+      openGate = null;
+      res.writeHead(204);
+      return res.end();
+    }
+    // The tone from a slow server: the first request for an address is answered after ?ms, so a
+    // clip told to play stays without data that long. The redirect check (bytes=0-0) and every
+    // later request for the same address are answered at once.
+    if (p === "/late.wav") {
+      if (req.headers.range !== "bytes=0-0" && !lateSeen.has(req.url)) {
+        lateSeen.add(req.url);
+        await sleep(+new URL(req.url, "http://127.0.0.1").searchParams.get("ms") || 0);
+      }
+      res.writeHead(200, { "Content-Type": "audio/wav", "Content-Length": wav.length, "Cache-Control": "no-store" });
+      return res.end(wav);
+    }
+    // The tone as a same-origin file that is never stored, so every redirect check for it reaches
+    // this server and is counted (the check fetches with cache "force-cache").
+    if (p === "/fresh.wav") {
+      res.writeHead(200, { "Content-Type": "audio/wav", "Content-Length": wav.length, "Cache-Control": "no-store" });
+      return res.end(wav);
+    }
     if (req.url === "/adsrc") {
       const adPort = await adReady;
       res.writeHead(200, { "Content-Type": "text/plain" });
@@ -162,11 +238,13 @@ async function installSpyOnce(sw) {
       await new Promise((r) => setTimeout(r, 50));
     }
     const log = [];
-    globalThis.__spy = { log, pings: 0, hooked: 0 };
+    globalThis.__spy = { log, pings: 0, pingsTop: 0, hooked: 0 };
     // Count inbound 'navigated' pings so a scenario can assert the anti-flood ceiling: the
     // gesture fast-path trades some of that ceiling away and nothing else would catch it.
-    chrome.runtime.onMessage.addListener((m) => {
+    // pingsTop: those a top frame sent.
+    chrome.runtime.onMessage.addListener((m, sender) => {
       if (m && m.type === "navigated") globalThis.__spy.pings++;
+      if (m && m.type === "navigated" && sender && sender.frameId === 0) globalThis.__spy.pingsTop++;
       if (m && m.type === "hooked") globalThis.__spy.hooked++;
     });
     const orig = chrome.tabs.sendMessage.bind(chrome.tabs);
@@ -187,7 +265,7 @@ async function installSpyOnce(sw) {
 
 const swSpyLog = (sw) => sw.evaluate(() => globalThis.__spy.log);
 const swClearLog = (sw) => sw.evaluate(() => { globalThis.__spy.log.length = 0; });
-const swClearSpy = (sw) => sw.evaluate(() => { globalThis.__spy.log.length = 0; globalThis.__spy.pings = 0; globalThis.__spy.hooked = 0; });
+const swClearSpy = (sw) => sw.evaluate(() => { globalThis.__spy.log.length = 0; globalThis.__spy.pings = 0; globalThis.__spy.pingsTop = 0; globalThis.__spy.hooked = 0; });
 // Runs `func` in a tab's ISOLATED world: the voice of our content script, which is what a page
 // that has broken into its renderer could use. Returns what func returns.
 // The function travels as source into the worker's DevTools evaluation (no eval in any extension
@@ -779,6 +857,171 @@ async function openPopup(browser, page) {
     const pt = await browser.waitForTarget((t) => t.url().endsWith("/popup.html"), { timeout: 10000 });
     return (await pt.page()) || (await pt.asPage());
   } finally { await cdp.detach().catch(() => {}); }
+}
+
+// ---- lazy-host.html: a frame that loads late or never ----
+// The outcome of a call that may never answer: HUNG after `ms`. The call itself stays open, and
+// closing its page ends it.
+const HUNG = "hung";
+const raced = (p, ms) => Promise.race([p, sleep(ms).then(() => HUNG)]);
+// Opens lazy-host.html with this query and resolves with its page once the top document is
+// parsed, its clip plays (?clip=1) and its eager frame has its feed, with a player that plays
+// for ?eager=1 and ?eager=x. The navigation itself is not awaited: it resolves only when every
+// frame is parsed, and with ?late=open or ?late=silent one never is.
+async function newLatePage(browser, port, query) {
+  const page = await browser.newPage();
+  try {
+    page.goto(`http://127.0.0.1:${port}/lazy-host.html?${query}`, { waitUntil: "domcontentloaded", timeout: 60000 }).catch(() => {});
+    await lateReady(page, query);
+    return page;
+  } catch (e) {
+    await page.close().catch(() => {});
+    throw e;
+  }
+}
+async function lateReady(page, query) {
+  await page.waitForFunction((q) => location.search.slice(1) === q && document.readyState !== "loading", { timeout: 8000, polling: 100 }, query);
+  if (/(^|&)clip=1(&|$)/.test(query))
+    await page.waitForFunction(() => { const v = document.getElementById("clip"); return !!v && !v.paused && v.readyState >= 2; }, { timeout: 5000, polling: 100 });
+  if (/(^|&)eager=(1|x|plain)(&|$)/.test(query)) {
+    const plays = !/(^|&)eager=plain(&|$)/.test(query);
+    for (let i = 0; ; i++) {
+      const inner = page.frames().find((f) => f.url().includes("&eager"));
+      if (inner && (await inner.evaluate((plays) => { const v = document.querySelector("video"); return window.feedReady === true && (!plays || (!!v && !v.paused && v.readyState >= 2)); }, plays).catch(() => false))) break;
+      if (i >= 60) throw new Error("the eager frame's feed never got ready");
+      await sleep(100);
+    }
+  }
+  await sleep(300);
+}
+// Every frame of the tab as it stands, read at once: its id, its address, the id of its frame
+// element where the frame can read it, and whether it runs the content script. An injection that
+// waits for the frames (frameIdOf) never answers on these pages, so this one does not wait
+// (injectImmediately). It answers only once every frame has run it: not while one is busy.
+const framesNow = (sw, tabId) => sw.evaluate(async (t) => {
+  const r = await chrome.scripting.executeScript({ target: { tabId: t, allFrames: true }, injectImmediately: true, func: () => {
+    let el = null;
+    try { el = window.frameElement ? window.frameElement.id : null; } catch (_) {}
+    return { href: location.href, el, script: !!window.__VB_INIT__ };
+  } });
+  return r.map((x) => ({ frameId: x.frameId, ...(x.result || {}) }));
+}, tabId);
+const frameIdNow = async (sw, tabId, fragment) => {
+  const hit = (await framesNow(sw, tabId)).find((f) => typeof f.href === "string" && f.href.includes(fragment));
+  return hit ? hit.frameId : null;
+};
+const measureFrame = (sw, tabId, frameId) =>
+  sw.evaluate((t, f) => chrome.tabs.sendMessage(t, { cmd: "measure" }, { frameId: f }).catch(() => null), tabId, frameId);
+const levelIn = (m) => !!(m && m.ok && m.signal && m.rms < 0.1);
+// Polls until the frame whose address contains `fragment` holds the level on its player (set
+// well below 1x), or the time is up. Resolves with the frame's id (null while no document has
+// that address), its last measure and how long it took.
+async function waitLevelInFrame(sw, tabId, fragment, timeoutMs) {
+  const t0 = Date.now();
+  let inner = null, m = null;
+  for (;;) {
+    inner = await frameIdNow(sw, tabId, fragment);
+    if (inner != null) m = await measureFrame(sw, tabId, inner);
+    if (levelIn(m) || Date.now() - t0 > timeoutMs) break;
+    await sleep(250);
+  }
+  return { inner, m, ok: levelIn(m), ms: Date.now() - t0 };
+}
+// Counts the worker's own calls of chrome.scripting.executeScript per tab, in four kinds: read
+// (its function that reads the frames), all (the content script into all frames), top (into the
+// top frame alone) and doc (into one document). For each kind how many started, how many are
+// open, and the most that were open at one time. The harness's own calls carry other functions.
+const injectSpyOn = (sw) => sw.evaluate(() => {
+  if (globalThis.__injSpy) { globalThis.__injSpy.tabs = {}; return; }
+  const orig = chrome.scripting.executeScript.bind(chrome.scripting);
+  const st = globalThis.__injSpy = { orig, tabs: {} };
+  const zero = () => ({ started: 0, open: 0, max: 0 });
+  chrome.scripting.executeScript = (inj) => {
+    const p = orig(inj);
+    if (inj && inj.target && (inj.files || (inj.func && inj.func.name === "frameFacts"))) {
+      const tab = st.tabs[inj.target.tabId] = st.tabs[inj.target.tabId] || { read: zero(), all: zero(), top: zero(), doc: zero() };
+      const k = !inj.files ? tab.read : inj.target.allFrames ? tab.all : inj.target.documentIds ? tab.doc : tab.top;
+      k.started++;
+      k.max = Math.max(k.max, ++k.open);
+      const done = () => { k.open--; };
+      p.then(done, done);
+    }
+    return p;
+  };
+});
+const injectSpyOff = (sw) => sw.evaluate(() => {
+  if (!globalThis.__injSpy) return;
+  chrome.scripting.executeScript = globalThis.__injSpy.orig;
+  delete globalThis.__injSpy;
+});
+const injectCounts = (sw, tabId) => sw.evaluate((t) => {
+  const z = { started: 0, open: 0, max: 0 };
+  return (globalThis.__injSpy && globalThis.__injSpy.tabs[t]) || { read: z, all: z, top: z, doc: z };
+}, tabId);
+// The content-script injections among those counts: how many started, and how many are open.
+const scriptsStarted = (c) => c.all.started + c.top.started + c.doc.started;
+const scriptsOpen = (c) => c.all.open + c.top.open + c.doc.open;
+// Ends a scenario on such a page. A release that cannot answer (the tab's queue is held by a call
+// that hangs) is given up on, and closing the page ends every call that waits for its frames.
+async function closeLatePage(sw, page, tabId) {
+  if (tabId != null) await raced(swSetGain(sw, tabId, 1).catch(() => {}), 3000);
+  await page.close().catch(() => {});
+}
+
+// Errors thrown in the page's worlds while it is watched: uncaught ones from anywhere, and with
+// `caught` also those the extension's own script catches itself (the debugger stops at each
+// exception, reads it and goes on). Resolves with { errors, close }.
+async function watchErrors(page, caught) {
+  const cdp = await page.createCDPSession();
+  const errors = [];
+  await cdp.send("Runtime.enable");
+  cdp.on("Runtime.exceptionThrown", (p) => {
+    const d = p.exceptionDetails || {};
+    errors.push(`uncaught ${d.exception && d.exception.description ? d.exception.description.split("\n")[0] : d.text} at ${String(d.url || "").replace(/^chrome-extension:\/\/[a-z]+\//, "")}:${d.lineNumber + 1}`);
+  });
+  if (caught) {
+    // A call frame names its script by id: the addresses come with the scripts, which the
+    // debugger lists as it is switched on.
+    const scripts = new Map();
+    cdp.on("Debugger.scriptParsed", (s) => { scripts.set(s.scriptId, s.url || ""); });
+    cdp.on("Debugger.paused", (p) => {
+      try {
+        const top = (p.callFrames || [])[0];
+        const url = top ? scripts.get(top.location.scriptId) || top.url || "" : "";
+        if (p.reason === "exception" && /^chrome-extension:\/\/[a-z]+\/content\.js$/.test(url) && !(p.data && p.data.uncaught))
+          errors.push(`caught ${p.data && p.data.description ? p.data.description.split("\n")[0] : "exception"} at content.js:${top.location.lineNumber + 1}`);
+      } catch (_) {}
+      cdp.send("Debugger.resume").catch(() => {});
+    });
+    await cdp.send("Debugger.enable");
+    await cdp.send("Debugger.setPauseOnExceptions", { state: "all" });
+  }
+  return { errors, close: () => cdp.detach().catch(() => {}) };
+}
+// Which of the page's clips the top frame reports as held to a probe, by the clip's place on the
+// page: its id, or null when the frame holds none of them. The frame's reports are read in its
+// own world, where recordReports put a recorder before.
+const recordReports = (sw, tabId) => asContentScript(sw, tabId, () => {
+  if (window.__reports) { window.__reports.length = 0; return true; }
+  const send = chrome.runtime.sendMessage.bind(chrome.runtime);
+  const reports = window.__reports = [];
+  chrome.runtime.sendMessage = (m, ...rest) => {
+    if (m && m.type === "frameCandidates") reports.push(m.cands);
+    return send(m, ...rest);
+  };
+  return true;
+});
+async function heldClip(sw, page, tabId, ids) {
+  await asContentScript(sw, tabId, () => { window.__reports.length = 0; return true; });
+  await sw.evaluate((t) => chrome.tabs.sendMessage(t, { cmd: "probe" }, { frameId: 0 }).catch(() => null), tabId);
+  await sleep(250);
+  const cands = ((await asContentScript(sw, tabId, () => window.__reports)) || []).pop() || [];
+  const held = cands.find((c) => c.held);
+  if (!held) return null;
+  const ys = await page.evaluate((list) => list.map((i) => { const v = document.getElementById(i); return v ? Math.round(v.getBoundingClientRect().y) : null; }), ids);
+  let best = null;
+  ids.forEach((id, k) => { if (ys[k] != null && (best == null || Math.abs(ys[k] - held.rect.y) < Math.abs(ys[best] - held.rect.y))) best = k; });
+  return best == null ? null : ids[best];
 }
 
 // ---- scenarios ----------------------------------------------------------
@@ -7272,6 +7515,1004 @@ const scenarios = {
       await swSetGain(ctx.sw, tabId, 1).catch(() => {});
       await page.close();
     }
+  },
+
+  // ---- 1.2.4 ----
+  // Pages with a frame that is not ready (lazy-host.html). An injection of the content script
+  // does not settle while its document has not loaded, so nothing may wait for one without
+  // limit. The worker's calls below are raced against a timeout, so a scenario reports a call
+  // that never answers and the run goes on.
+
+  // An iframe with loading="lazy" below the fold, and an audible hookable clip in the top
+  // document. The popup's prepare and a slider move each answer within 2 s with element mode, and
+  // the level is on the clip. The lazy frame is still unloaded at the end: nothing here passes
+  // because it loaded.
+  async s105_lazy_frame_slider_answers(ctx) {
+    const page = await newLatePage(ctx.browser, ctx.port, "clip=1&s105=a");
+    let tabId = null;
+    try {
+      tabId = await tabIdByUrl(ctx.sw, "s105=a");
+      let t0 = Date.now();
+      const pre = await raced(ctx.sw.evaluate((t) => prepare(t), tabId), 2000);
+      const preMs = Date.now() - t0;
+      if (pre === HUNG) return "BUG: the popup's prepare did not answer within 2 s on a page with an unloaded lazy frame";
+      t0 = Date.now();
+      const r = await raced(swSetGain(ctx.sw, tabId, 0.05), 2000);
+      const ms = Date.now() - t0;
+      if (r === HUNG) return "BUG: setGain did not answer within 2 s on a page with an unloaded lazy frame";
+      const m = await measureTop(ctx.sw, tabId);
+      const late = (await framesNow(ctx.sw, tabId)).find((f) => f.frameId !== 0);
+      ctx.note(`prepare answered ${pre.mode} in ${preMs} ms, setGain ${JSON.stringify(r)} in ${ms} ms, measure ${fmtMeasure(m)}, lazy frame at ${late && late.href}`);
+      if (!late || !/^about:blank/.test(late.href || "")) return `setup failed: the lazy frame is not unloaded (${JSON.stringify(late)})`;
+      if (pre.mode !== "element") return `BUG: prepare did not find the clip (${JSON.stringify(pre)})`;
+      if (r.mode !== "element") return `BUG: setGain did not answer element (${JSON.stringify(r)})`;
+      if (!m || !m.ok || !m.signal || m.rms > 0.1) return `BUG: the level is not on the clip (${fmtMeasure(m)})`;
+      return true;
+    } finally { await closeLatePage(ctx.sw, page, tabId); }
+  },
+
+  // The same page with a level saved for its site. The arrival seeds the tab and the restore pass
+  // puts the level on the clip, with no popup and no scroll: the lazy frame stays unloaded. The
+  // level alone does not show that the pass got through, since the top frame takes the clip as
+  // soon as the pass has armed it. So the pass also has to end, with the record on the clip's
+  // frame, and a popup opened afterwards gets element mode at once.
+  async s105b_lazy_frame_saved_level_arrives(ctx) {
+    const host = "127.0.0.1";
+    let page = null, tabId = null;
+    try {
+      await swSaveSite(ctx.sw, host, 0.05);
+      page = await newLatePage(ctx.browser, ctx.port, "clip=1&s105=b");
+      tabId = await tabIdByUrl(ctx.sw, "s105=b");
+      const w = await waitMeasure(ctx.sw, tabId, (m) => !!(m && m.ok && m.signal && m.rms < 0.1), 6000);
+      const gain = await swGetGain(ctx.sw, tabId);
+      const ended = await waitIdle(ctx.sw, tabId, 8000, 1000);
+      const mode = await swGetMode(ctx.sw, tabId);
+      const pre = await raced(ctx.sw.evaluate((t) => prepare(t), tabId), 2000);
+      const late = (await framesNow(ctx.sw, tabId)).find((f) => f.frameId !== 0);
+      ctx.note(`gain ${gain}, measure ${fmtMeasure(w.m || w.last)} after ${w.elapsed} ms, pass ended ${ended}, record ${JSON.stringify(mode)}, prepare ${pre === HUNG ? "did not answer" : JSON.stringify({ mode: pre.mode, restoring: !!pre.restoring })}, lazy frame at ${late && late.href}`);
+      if (!late || !/^about:blank/.test(late.href || "")) return `setup failed: the lazy frame is not unloaded (${JSON.stringify(late)})`;
+      if (gain !== 0.05) return `setup failed: the tab holds ${gain}, not the saved 0.05`;
+      if (!w.m) return `BUG: the saved level did not reach the clip on a page with an unloaded lazy frame (last measure ${JSON.stringify(w.last)})`;
+      if (!ended) return "BUG: the restore pass did not end within 8 s on a page with an unloaded lazy frame";
+      if (!mode || mode.mode !== "element" || mode.frameId !== 0) return `BUG: the pass left no element record for the top frame (${JSON.stringify(mode)})`;
+      if (pre === HUNG) return "BUG: the popup's prepare did not answer within 2 s after the pass";
+      if (pre.mode !== "element" || pre.restoring) return `BUG: prepare does not answer element once the pass has ended (${JSON.stringify(pre)})`;
+      return true;
+    } finally {
+      await swForgetSite(ctx.sw, host);
+      if (page) await closeLatePage(ctx.sw, page, tabId);
+    }
+  },
+
+  // A player in a frame that is ready, next to the lazy frame, and no media in the top document.
+  // The probe names the player's frame, and the level lands there.
+  async s105c_ready_frame_player_next_to_lazy(ctx) {
+    const page = await newLatePage(ctx.browser, ctx.port, "eager=1&s105=c");
+    let tabId = null;
+    try {
+      tabId = await tabIdByUrl(ctx.sw, "s105=c");
+      const inner = await frameIdNow(ctx.sw, tabId, "&eager");
+      if (inner == null || inner === 0) return `setup failed: no id for the player's frame (${inner})`;
+      const p = await raced(ctx.sw.evaluate((t) => predictMode(t), tabId), 2000);
+      if (p === HUNG) return "BUG: the probe did not answer within 2 s on a page with an unloaded lazy frame";
+      const r = await raced(swSetGain(ctx.sw, tabId, 0.05), 3000);
+      if (r === HUNG) return "BUG: setGain did not answer within 3 s on a page with an unloaded lazy frame";
+      const m = await measureFrame(ctx.sw, tabId, inner);
+      ctx.note(`player in frame ${inner}, probe ${JSON.stringify({ mode: p.mode, frameId: p.frameId })}, setGain ${JSON.stringify(r)}, measure there ${fmtMeasure(m)}`);
+      if (p.mode !== "element" || p.frameId !== inner) return `BUG: the probe does not name the player's frame ${inner} (${JSON.stringify(p)})`;
+      if (r.mode !== "element") return `BUG: setGain did not answer element (${JSON.stringify(r)})`;
+      if (!m || !m.ok || !m.signal || m.rms > 0.1) return `BUG: the level is not on the player in its frame (${fmtMeasure(m)})`;
+      return true;
+    } finally { await closeLatePage(ctx.sw, page, tabId); }
+  },
+
+  // The lazy frame holds a player and comes into view after the tab has its level. The top clip
+  // gets the level first, with the lazy frame unloaded: that frame is sent no script, so no
+  // injection is open. Then the top clip pauses and the page scrolls the frame into view: it
+  // loads, its player starts, and the level moves to that player. The tab's load state reports
+  // nothing of this. The top frame hears the load event of the frame element and pings, and the
+  // pass that follows sends the new document its script, which the count of injections shows.
+  // Three times: a lazy frame from the page's own site, one from another site, and one inside an
+  // open shadow root. The load event of a frame element does not leave its shadow root, so there
+  // the listener on the root is the one that hears it.
+  async s105d_lazy_frame_player_gets_level_once_loaded(ctx) {
+    const sites = ["same site", "another site", "in a shadow root"];
+    const one = async (site) => {
+      const tag = `s105=d${sites.indexOf(site) + 1}`;
+      const page = await newLatePage(ctx.browser, ctx.port, `clip=1&lazy=${site === "another site" ? "xplayer" : "player"}${site === "in a shadow root" ? "&shadow=1" : ""}&${tag}`);
+      let tabId = null;
+      try {
+        tabId = await tabIdByUrl(ctx.sw, tag);
+        const r = await raced(swSetGain(ctx.sw, tabId, 0.05), 2000);
+        if (r === HUNG) return `BUG (${site}): setGain did not answer within 2 s on a page with an unloaded lazy frame`;
+        if (r.mode !== "element") return `setup failed (${site}): ${JSON.stringify(r)}`;
+        const before = await injectCounts(ctx.sw, tabId);
+        const unloaded = (await framesNow(ctx.sw, tabId)).find((f) => f.el === "late");
+        await page.evaluate(() => {
+          document.getElementById("clip").pause();
+          const shell = document.getElementById("shell");
+          (shell ? shell.shadowRoot : document).getElementById("late").scrollIntoView();
+        });
+        const w = await waitLevelInFrame(ctx.sw, tabId, "&late", 8000);
+        const after = await injectCounts(ctx.sw, tabId);
+        const mode = await swGetMode(ctx.sw, tabId);
+        ctx.note(`${site}: before the scroll ${scriptsStarted(before)} injection(s) started, ${scriptsOpen(before)} open, ${w.ms} ms after it ${after.doc.started} into single documents and ${scriptsOpen(after)} open, lazy frame ${w.inner}, mode ${JSON.stringify(mode)}, measure there ${fmtMeasure(w.m)}`);
+        if (!unloaded || !/^about:blank/.test(unloaded.href || "")) return `setup failed (${site}): the lazy frame was not unloaded before the scroll (${JSON.stringify(unloaded)})`;
+        if (scriptsOpen(before)) return `BUG (${site}): an injection is open on a page whose only waiting frame is a lazy iframe (${JSON.stringify(before)})`;
+        if (w.inner == null) return `setup failed (${site}): the lazy frame did not load after the scroll`;
+        if (!w.ok) return `BUG (${site}): the player in the frame that loaded late did not get the level (${fmtMeasure(w.m)})`;
+        if (!mode || mode.mode !== "element" || mode.frameId !== w.inner) return `BUG (${site}): the tab's record does not name the frame that holds the level (${JSON.stringify(mode)})`;
+        return true;
+      } finally { await closeLatePage(ctx.sw, page, tabId); }
+    };
+    await injectSpyOn(ctx.sw);
+    try {
+      const failed = [];
+      for (const site of sites) {
+        const r = await one(site);
+        if (r !== true) failed.push(r);
+      }
+      return failed.length ? failed.join(" | ") : true;
+    } finally { await injectSpyOff(ctx.sw); }
+  },
+
+  // A frame whose server never finishes its response, in place of the lazy one: its document has
+  // started and stays in loading. The first injection call of the tab does not wait for that
+  // document (it sends it the script and goes on, well inside the 250 ms it grants a document
+  // that has loaded), setGain answers within 2 s with element mode, and the level is on the clip.
+  async s105e_unfinished_frame_slider_answers(ctx) {
+    const page = await newLatePage(ctx.browser, ctx.port, "clip=1&late=open&s105=e");
+    let tabId = null;
+    try {
+      tabId = await tabIdByUrl(ctx.sw, "s105=e");
+      const first = await raced(ctx.sw.evaluate(async (t) => { const t0 = performance.now(); await ensureContentScript(t); return Math.round(performance.now() - t0); }, tabId), 2000);
+      if (first === HUNG) return "BUG: the injection did not answer within 2 s on a page with a frame whose response never ends";
+      const t0 = Date.now();
+      const r = await raced(swSetGain(ctx.sw, tabId, 0.05), 2000);
+      const ms = Date.now() - t0;
+      if (r === HUNG) return "BUG: setGain did not answer within 2 s on a page with a frame whose response never ends";
+      const m = await measureTop(ctx.sw, tabId);
+      const late = (await framesNow(ctx.sw, tabId)).find((f) => f.frameId !== 0);
+      ctx.note(`first injection call ${first} ms, setGain ${JSON.stringify(r)} in ${ms} ms, measure ${fmtMeasure(m)}, unfinished frame at ${late && late.href}, script there ${late && late.script}`);
+      if (!late || !/open-frame/.test(late.href || "") || late.script) return `setup failed: the unfinished frame is not as expected (${JSON.stringify(late)})`;
+      if (first >= 200) return `BUG: the injection call waited ${first} ms on a page whose only other document is still loading`;
+      if (r.mode !== "element") return `BUG: setGain did not answer element (${JSON.stringify(r)})`;
+      if (!m || !m.ok || !m.signal || m.rms > 0.1) return `BUG: the level is not on the clip (${fmtMeasure(m)})`;
+      return true;
+    } finally { await closeLatePage(ctx.sw, page, tabId); }
+  },
+
+  // Many probes on the lazy page, one after the other and four at once, and two slider moves.
+  // The content script goes out once, to the top frame at the first call. The lazy frame that has
+  // not loaded is sent nothing, no call goes to all frames, and no injection is open at the end.
+  // Every later call costs its read of the frames and nothing else.
+  async s105f_no_injection_stays_open_on_the_lazy_page(ctx) {
+    const page = await newLatePage(ctx.browser, ctx.port, "clip=1&s105=f");
+    let tabId = null;
+    await injectSpyOn(ctx.sw);
+    try {
+      tabId = await tabIdByUrl(ctx.sw, "s105=f");
+      const first = await raced(ctx.sw.evaluate((t) => predictMode(t), tabId), 2000);
+      if (first === HUNG) return "BUG: the probe did not answer within 2 s on a page with an unloaded lazy frame";
+      const rest = await raced((async () => {
+        for (let i = 0; i < 8; i++) await ctx.sw.evaluate((t) => predictMode(t), tabId);
+        await ctx.sw.evaluate((t) => Promise.all([predictMode(t), predictMode(t), predictMode(t), predictMode(t)]), tabId);
+        return [await swSetGain(ctx.sw, tabId, 0.05), await swSetGain(ctx.sw, tabId, 0.06)];
+      })(), 20000);
+      if (rest === HUNG) return "BUG: twelve more probes and two slider moves did not answer within 20 s on a page with an unloaded lazy frame";
+      const [r, r2] = rest;
+      const c = await injectCounts(ctx.sw, tabId);
+      const late = (await framesNow(ctx.sw, tabId)).find((f) => f.frameId !== 0);
+      ctx.note(`13 probes and 2 slider moves: ${c.read.started} read(s) of the frames, ${c.top.started} injection(s) into the top frame, ${c.doc.started} into single documents, ${c.all.started} into all frames, ${scriptsOpen(c)} open at the end, last answer ${JSON.stringify(r2)}, lazy frame at ${late && late.href}`);
+      if (!late || !/^about:blank/.test(late.href || "")) return `setup failed: the lazy frame is not unloaded (${JSON.stringify(late)})`;
+      if (c.all.started) return `BUG: ${c.all.started} injection(s) went to all frames`;
+      if (scriptsOpen(c)) return `BUG: an injection is open at the end on a page whose only waiting frame is a lazy iframe (${JSON.stringify(c)})`;
+      if (c.doc.started) return `BUG: the lazy frame that has not loaded was sent the script (${c.doc.started} injection(s) into single documents)`;
+      if (c.top.started !== 1 || c.top.max > 1) return `BUG: the top frame was sent the script ${c.top.started} times (${c.top.max} open at most), once is what it takes`;
+      if (r.mode !== "element" || r2.mode !== "element") return `BUG: a slider move did not answer element (${JSON.stringify(r)}, ${JSON.stringify(r2)})`;
+      return true;
+    } finally {
+      await injectSpyOff(ctx.sw);
+      await closeLatePage(ctx.sw, page, tabId);
+    }
+  },
+
+  // The top document itself is still loading: a script its server holds for 3 s keeps the parser,
+  // while the clip plays already and the lazy frame exists already. A slider move that arrives
+  // meanwhile waits for the top document and answers element. The grace is for the frames only:
+  // an answer at its end would find no script in the top frame and send the tab to capture.
+  async s105g_loading_top_document_is_waited_for(ctx) {
+    const page = await ctx.browser.newPage();
+    let tabId = null;
+    try {
+      page.goto(`http://127.0.0.1:${ctx.port}/lazy-host.html?clip=1&hold=3000&s105=g`, { waitUntil: "load", timeout: 20000 }).catch(() => {});
+      for (let i = 0; i < 60 && tabId == null; i++) {
+        tabId = await tabIdByUrl(ctx.sw, "s105=g");
+        if (tabId == null) await sleep(50);
+      }
+      if (tabId == null) return "setup failed: the page did not open";
+      await page.waitForFunction(() => { const v = document.getElementById("clip"); return !!v && !v.paused && v.readyState >= 2; }, { timeout: 5000, polling: 100 });
+      const state = await page.evaluate(() => document.readyState);
+      const t0 = Date.now();
+      const r = await raced(swSetGain(ctx.sw, tabId, 0.05), 8000);
+      const ms = Date.now() - t0;
+      if (r === HUNG) return "BUG: setGain did not answer within 8 s on a page whose top document loads for 3 s";
+      const m = await measureTop(ctx.sw, tabId);
+      ctx.note(`top document ${state} when setGain arrived, answer ${JSON.stringify(r)} after ${ms} ms, measure ${fmtMeasure(m)}`);
+      if (state !== "loading") return `setup failed: the top document was ${state}, not loading, when setGain arrived`;
+      if (r.mode !== "element") return `BUG: setGain did not wait for the top document (${JSON.stringify(r)} after ${ms} ms)`;
+      if (!m || !m.ok || !m.signal || m.rms > 0.1) return `BUG: the level is not on the clip (${fmtMeasure(m)})`;
+      return true;
+    } finally { await closeLatePage(ctx.sw, page, tabId); }
+  },
+
+  // The tab moves to a new document while a lazy frame of the page it leaves still waits: by a
+  // reload, and by a navigation to another address (the back/forward cache keeps that page). The
+  // first call on each new document sends the script to its top document and its player frame.
+  // Nothing goes to all frames, and no injection is open at the end.
+  async s105h_new_document_gets_its_own_injection(ctx) {
+    const query = (n) => `eager=1&s105=h&doc=${n}`;
+    const page = await newLatePage(ctx.browser, ctx.port, query(1));
+    let tabId = null;
+    await injectSpyOn(ctx.sw);
+    try {
+      tabId = await tabIdByUrl(ctx.sw, "s105=h");
+      const ensure = () => raced(ctx.sw.evaluate((t) => ensureContentScript(t).then((x) => (Array.isArray(x) ? x.length : null)), tabId), 2000);
+      const loaded = async () => (await framesNow(ctx.sw, tabId)).filter((f) => !/^about:blank/.test(f.href || ""));
+      const short = (list) => list.map((f) => `${f.frameId}:${f.script ? "script" : "none"}`).join(" ");
+      if ((await ensure()) === HUNG) return "BUG: the injection did not answer within 2 s on a page with an unloaded lazy frame";
+      await sleep(400);
+      const c1 = await injectCounts(ctx.sw, tabId);
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await lateReady(page, query(1));
+      const bare = await loaded();
+      const c2 = await injectCounts(ctx.sw, tabId);
+      if ((await ensure()) === HUNG) return "BUG: the injection did not answer within 2 s after the reload";
+      await sleep(400);
+      const afterReload = await loaded();
+      await page.goto(`http://127.0.0.1:${ctx.port}/lazy-host.html?${query(2)}`, { waitUntil: "domcontentloaded" });
+      await lateReady(page, query(2));
+      const bare2 = await loaded();
+      if ((await ensure()) === HUNG) return "BUG: the injection did not answer within 2 s after the navigation";
+      await sleep(400);
+      const afterNav = await loaded();
+      const c3 = await injectCounts(ctx.sw, tabId);
+      ctx.note(`injections started: ${scriptsStarted(c1)} before the reload, ${scriptsStarted(c2)} right after it, ${scriptsStarted(c3)} after the navigation (${c3.top.started} into a top frame, ${c3.doc.started} into single documents, ${c3.all.started} into all frames), ${scriptsOpen(c3)} open at the end, frames after the reload ${short(afterReload)}, after the navigation ${short(afterNav)}`);
+      if (bare.some((f) => f.script) || bare2.some((f) => f.script)) return `setup failed: a new document ran the script before any call (${short(bare)}, ${short(bare2)})`;
+      if (afterReload.length < 2 || !afterReload.every((f) => f.script)) return `BUG: after the reload a frame of the new document is without the script (${short(afterReload)})`;
+      if (afterNav.length < 2 || !afterNav.every((f) => f.script)) return `BUG: after the navigation a frame of the new document is without the script (${short(afterNav)})`;
+      if (scriptsStarted(c1) !== 2) return `setup failed: the first call did not send the script to the top frame and the player frame (${JSON.stringify(c1)})`;
+      if (c3.all.started) return `BUG: ${c3.all.started} injection(s) went to all frames`;
+      if (scriptsOpen(c3)) return `BUG: an injection is open at the end on pages whose only waiting frame is a lazy iframe (${JSON.stringify(c3)})`;
+      return true;
+    } finally {
+      await injectSpyOff(ctx.sw);
+      await closeLatePage(ctx.sw, page, tabId);
+    }
+  },
+
+  // A top document that never becomes ready: its parser waits for a script that never comes. The
+  // first slider move waits for the top frame for as long as INJECT_TOP_DEADLINE_MS allows (10 s)
+  // and then goes on without it. A probe that follows has its answer at once: nothing waits for
+  // that document a second time.
+  async s105i_top_document_never_ready_is_bounded(ctx) {
+    const page = await ctx.browser.newPage();
+    let tabId = null;
+    try {
+      page.goto(`http://127.0.0.1:${ctx.port}/lazy-host.html?clip=1&hold=open&s105=i`, { waitUntil: "load", timeout: 60000 }).catch(() => {});
+      for (let i = 0; i < 60 && tabId == null; i++) {
+        tabId = await tabIdByUrl(ctx.sw, "s105=i");
+        if (tabId == null) await sleep(50);
+      }
+      if (tabId == null) return "setup failed: the page did not open";
+      await page.waitForFunction(() => { const v = document.getElementById("clip"); return !!v && !v.paused && v.readyState >= 2; }, { timeout: 5000, polling: 100 });
+      let t0 = Date.now();
+      const r = await raced(swSetGain(ctx.sw, tabId, 0.05), 15000);
+      const ms = Date.now() - t0;
+      if (r === HUNG) return "BUG: setGain did not answer within 15 s on a page whose top document never becomes ready";
+      t0 = Date.now();
+      const p = await raced(ctx.sw.evaluate((t) => predictMode(t), tabId), 5000);
+      const ms2 = Date.now() - t0;
+      ctx.note(`setGain ${JSON.stringify(r)} after ${ms} ms, the next probe ${p === HUNG ? "did not answer" : JSON.stringify({ mode: p.mode })} after ${ms2} ms`);
+      if (ms < 9000) return `BUG: setGain gave up on the top document after ${ms} ms, before its deadline`;
+      if (p === HUNG || ms2 > 2000) return `BUG: the next probe waited for the same top document again (${ms2} ms)`;
+      return true;
+    } finally { await closeLatePage(ctx.sw, page, tabId); }
+  },
+
+  // Two lazy frames, the second 6000 px below the first. The tab has its level on the top clip.
+  // The clip pauses and the page scrolls the first frame into view: it loads and its player
+  // starts, while the second frame stays unloaded. The player gets the level in element mode,
+  // and no injection is open for the frame that still waits.
+  async s105j_first_of_two_lazy_frames_gets_the_level(ctx) {
+    const page = await newLatePage(ctx.browser, ctx.port, "clip=1&lazy=player&second=1&s105=j");
+    let tabId = null;
+    await injectSpyOn(ctx.sw);
+    try {
+      tabId = await tabIdByUrl(ctx.sw, "s105=j");
+      const r = await raced(swSetGain(ctx.sw, tabId, 0.05), 2000);
+      if (r === HUNG) return "BUG: setGain did not answer within 2 s on a page with two unloaded lazy frames";
+      if (r.mode !== "element") return `setup failed: ${JSON.stringify(r)}`;
+      await page.evaluate(() => { document.getElementById("clip").pause(); document.getElementById("late").scrollIntoView(); });
+      const w = await waitLevelInFrame(ctx.sw, tabId, "&late", 8000);
+      const second = (await framesNow(ctx.sw, tabId)).find((f) => f.el === "late2");
+      const mode = await swGetMode(ctx.sw, tabId);
+      const c = await injectCounts(ctx.sw, tabId);
+      ctx.note(`first lazy frame ${w.inner} after ${w.ms} ms, measure there ${fmtMeasure(w.m)}, mode ${JSON.stringify(mode)}, second lazy frame at ${second && second.href}, ${scriptsOpen(c)} injection(s) open`);
+      if (!second || !/^about:blank/.test(second.href || "")) return `setup failed: the second lazy frame is not unloaded (${JSON.stringify(second)})`;
+      if (w.inner == null) return "setup failed: the first lazy frame did not load after the scroll";
+      if (!w.ok) return `BUG: the player in the first lazy frame did not get the level while the second frame waits (${fmtMeasure(w.m)})`;
+      if (!mode || mode.mode !== "element" || mode.frameId !== w.inner) return `BUG: the tab's record does not name the frame that holds the level (${JSON.stringify(mode)})`;
+      if (scriptsOpen(c)) return `BUG: an injection is open while only a lazy frame waits (${JSON.stringify(c)})`;
+      return true;
+    } finally {
+      await injectSpyOff(ctx.sw);
+      await closeLatePage(ctx.sw, page, tabId);
+    }
+  },
+
+  // The page adds an iframe with a player while a lazy frame waits. The tab has its level on the
+  // top clip, which pauses as the frame is added. The tab's load state reports nothing for an
+  // added frame. The observer's ping brings the first pass, about 260 ms after the frame came,
+  // and that pass ends on the paused top clip. What the pass finds in the frame depends on the
+  // frame's server. Four kinds, and the player ends with the level in element mode each time:
+  // quick: the frame has loaded by the time the pass looks.
+  // slow: its address answers after 1.5 s, and its parser then waits 1.2 s for a script. Each
+  // injection that settles late brings a pass: the one into the empty document the frame starts
+  // with, when the frame leaves it, and the one into the document that was still loading, when
+  // it has loaded.
+  // loading: its address answers after 100 ms, and its parser then waits 300 ms for a script. The
+  // pass finds the document still loading, and the injection it sends settles within the 250 ms
+  // of the grace. That injection brings a pass all the same.
+  // commit: its address answers after 400 ms. The pass finds the frame on the empty document it
+  // starts with, and the frame gets its own document within the grace of that injection. The
+  // new document comes without the script, so the frames are read once more, and that read
+  // sends it one.
+  async s105k_added_frame_gets_the_level(ctx) {
+    const kinds = {
+      quick: "/x-feed.html?auto=audible&added",
+      slow: "/slow-feed.html?ms=1500&hold=1200&auto=audible&added",
+      loading: "/slow-feed.html?ms=100&hold=300&auto=audible&added",
+      commit: "/slow-feed.html?ms=400&auto=audible&added",
+    };
+    const one = async (kind) => {
+      const tag = `s105=k${kind}`;
+      const page = await newLatePage(ctx.browser, ctx.port, `clip=1&${tag}`);
+      let tabId = null;
+      try {
+        tabId = await tabIdByUrl(ctx.sw, tag);
+        const r = await raced(swSetGain(ctx.sw, tabId, 0.05), 2000);
+        if (r === HUNG) return `BUG (${kind}): setGain did not answer within 2 s on a page with an unloaded lazy frame`;
+        if (r.mode !== "element") return `setup failed (${kind}): ${JSON.stringify(r)}`;
+        const before = await injectCounts(ctx.sw, tabId);
+        await page.evaluate((src) => {
+          document.getElementById("clip").pause();
+          const f = document.createElement("iframe");
+          f.id = "added";
+          f.src = src;
+          document.body.insertBefore(f, document.body.firstChild);
+        }, kinds[kind]);
+        const w = await waitLevelInFrame(ctx.sw, tabId, "&added", kind === "slow" ? 12000 : 8000);
+        const mode = await swGetMode(ctx.sw, tabId);
+        const after = await injectCounts(ctx.sw, tabId);
+        const lazy = (await framesNow(ctx.sw, tabId)).find((f) => f.el === "late");
+        ctx.note(`${kind}: added frame ${w.inner} after ${w.ms} ms, ${after.doc.started - before.doc.started} injection(s) into single documents, measure there ${fmtMeasure(w.m)}, mode ${JSON.stringify(mode)}, lazy frame at ${lazy && lazy.href}`);
+        if (!lazy || !/^about:blank/.test(lazy.href || "")) return `setup failed (${kind}): the lazy frame is not unloaded (${JSON.stringify(lazy)})`;
+        if (w.inner == null) return `setup failed (${kind}): the added frame did not load`;
+        if (!w.ok) return `BUG (${kind}): the player in the added frame did not get the level (${fmtMeasure(w.m)})`;
+        if (!mode || mode.mode !== "element" || mode.frameId !== w.inner) return `BUG (${kind}): the tab's record does not name the added frame (${JSON.stringify(mode)})`;
+        return true;
+      } finally { await closeLatePage(ctx.sw, page, tabId); }
+    };
+    await injectSpyOn(ctx.sw);
+    try {
+      const failed = [];
+      for (const kind of Object.keys(kinds)) {
+        const r = await one(kind);
+        if (r !== true) failed.push(r);
+      }
+      return failed.length ? failed.join(" | ") : true;
+    } finally { await injectSpyOff(ctx.sw); }
+  },
+
+  // A frame navigates itself to a page with a player while a lazy frame waits. The tab has its
+  // level on the top clip, which pauses as the frame leaves. The tab's load state reports that
+  // navigation, and the pass at its end sends the new document its script: the player gets the
+  // level in element mode. Twice: a player that plays at once, and one that is told to play
+  // 1.5 s before its media arrives. That one is unpaused and without data when the script lands,
+  // so the pass's probe finds nothing playing there and stays with the paused top clip. The
+  // frame takes the clip's 'playing' as its play and pings, and the next pass moves the level.
+  async s105l_navigated_frame_gets_the_level(ctx) {
+    const one = async (kind) => {
+      const tag = `s105=l${kind === "slow start" ? 2 : 1}`;
+      const page = await newLatePage(ctx.browser, ctx.port, `eager=plain&clip=1&${tag}`);
+      let tabId = null;
+      try {
+        tabId = await tabIdByUrl(ctx.sw, tag);
+        const r = await raced(swSetGain(ctx.sw, tabId, 0.05), 2000);
+        if (r === HUNG) return `BUG (${kind}): setGain did not answer within 2 s on a page with an unloaded lazy frame`;
+        if (r.mode !== "element") return `setup failed (${kind}): ${JSON.stringify(r)}`;
+        const before = await frameIdNow(ctx.sw, tabId, "&eager");
+        await page.evaluate((auto) => {
+          document.getElementById("clip").pause();
+          document.getElementById("inner").contentWindow.location.assign(`/x-feed.html?auto=${auto}&moved`);
+        }, kind === "slow start" ? "slowstart" : "audible");
+        const w = await waitLevelInFrame(ctx.sw, tabId, "&moved", 10000);
+        const mode = await swGetMode(ctx.sw, tabId);
+        const lazy = (await framesNow(ctx.sw, tabId)).find((f) => f.el === "late");
+        ctx.note(`${kind}: frame ${before} navigated, level there after ${w.ms} ms, measure ${fmtMeasure(w.m)}, mode ${JSON.stringify(mode)}, lazy frame at ${lazy && lazy.href}`);
+        if (!lazy || !/^about:blank/.test(lazy.href || "")) return `setup failed (${kind}): the lazy frame is not unloaded (${JSON.stringify(lazy)})`;
+        if (before == null || w.inner !== before) return `setup failed (${kind}): the frame did not navigate (${before} before, ${w.inner} after)`;
+        if (!w.ok) return `BUG (${kind}): the player in the frame that navigated did not get the level (${fmtMeasure(w.m)})`;
+        if (!mode || mode.mode !== "element" || mode.frameId !== w.inner) return `BUG (${kind}): the tab's record does not name the frame that navigated (${JSON.stringify(mode)})`;
+        return true;
+      } finally { await closeLatePage(ctx.sw, page, tabId); }
+    };
+    const failed = [];
+    for (const kind of ["plays at once", "slow start"]) {
+      const r = await one(kind);
+      if (r !== true) failed.push(r);
+    }
+    return failed.length ? failed.join(" | ") : true;
+  },
+
+  // A player in a frame that has no address of its own, next to a lazy frame that waits: an
+  // about:blank frame the page fills node by node, one it writes with document.write, and a
+  // srcdoc frame. Ad players and some embeds live in such frames. Each time the probe names the
+  // frame, and the level lands on its player.
+  async s105m_player_in_a_written_frame_is_found(ctx) {
+    const one = async (kind) => {
+      const tag = `s105=m${kind}`;
+      const page = await newLatePage(ctx.browser, ctx.port, `written=${kind}&${tag}`);
+      let tabId = null;
+      try {
+        tabId = await tabIdByUrl(ctx.sw, tag);
+        const el = await page.$("#written");
+        const frame = el && (await el.contentFrame());
+        if (!frame) return `setup failed (${kind}): the page has no written frame`;
+        await frame.waitForFunction(() => { const v = document.querySelector("video"); return !!v && !v.paused && v.readyState >= 2; }, { timeout: 5000, polling: 100 });
+        const frames = await framesNow(ctx.sw, tabId);
+        const f = frames.find((x) => x.el === "written");
+        const lazy = frames.find((x) => x.el === "late");
+        if (!f) return `setup failed (${kind}): the written frame is not among the tab's frames (${JSON.stringify(frames)})`;
+        const p = await raced(ctx.sw.evaluate((t) => predictMode(t), tabId), 2000);
+        if (p === HUNG) return `BUG (${kind}): the probe did not answer within 2 s`;
+        const r = await raced(swSetGain(ctx.sw, tabId, 0.05), 3000);
+        if (r === HUNG) return `BUG (${kind}): setGain did not answer within 3 s`;
+        const m = await measureFrame(ctx.sw, tabId, f.frameId);
+        ctx.note(`${kind}: frame ${f.frameId} at ${String(f.href).replace(/^https?:\/\/[^/]+/, "").slice(0, 24)}, probe ${JSON.stringify({ mode: p.mode, frameId: p.frameId })}, setGain ${JSON.stringify(r)}, measure there ${fmtMeasure(m)}`);
+        if (!lazy || !/^about:blank/.test(lazy.href || "")) return `setup failed (${kind}): the lazy frame is not unloaded (${JSON.stringify(lazy)})`;
+        if (p.mode !== "element" || p.frameId !== f.frameId) return `BUG (${kind}): the probe does not name the written frame ${f.frameId} (${JSON.stringify({ mode: p.mode, frameId: p.frameId })})`;
+        if (r.mode !== "element") return `BUG (${kind}): setGain did not answer element (${JSON.stringify(r)})`;
+        if (!levelIn(m)) return `BUG (${kind}): the level is not on the player in the written frame (${fmtMeasure(m)})`;
+        return true;
+      } finally { await closeLatePage(ctx.sw, page, tabId); }
+    };
+    const failed = [];
+    for (const kind of ["dom", "write", "srcdoc"]) {
+      const r = await one(kind);
+      if (r !== true) failed.push(r);
+    }
+    return failed.length ? failed.join(" | ") : true;
+  },
+
+  // A page whose frames all have the script (a lazy frame that has not loaded apart, which gets
+  // none). The first probe sends the script to the top frame and the player frame. Three more
+  // probes send no content script anywhere: each reads the frames once and that is all.
+  async s105n_probe_on_a_page_with_the_script_injects_nothing(ctx) {
+    const page = await newLatePage(ctx.browser, ctx.port, "eager=1&s105=n");
+    let tabId = null;
+    await injectSpyOn(ctx.sw);
+    try {
+      tabId = await tabIdByUrl(ctx.sw, "s105=n");
+      const first = await raced(ctx.sw.evaluate((t) => predictMode(t), tabId), 2000);
+      if (first === HUNG) return "BUG: the probe did not answer within 2 s on a page with an unloaded lazy frame";
+      const c1 = await injectCounts(ctx.sw, tabId);
+      const bare = (await framesNow(ctx.sw, tabId)).filter((f) => !/^about:blank/.test(f.href || "") && !f.script);
+      const rest = await raced((async () => { for (let i = 0; i < 3; i++) await ctx.sw.evaluate((t) => predictMode(t), tabId); return true; })(), 6000);
+      if (rest === HUNG) return "BUG: three more probes did not answer within 6 s";
+      const c2 = await injectCounts(ctx.sw, tabId);
+      const reads = c2.read.started - c1.read.started, sent = scriptsStarted(c2) - scriptsStarted(c1);
+      ctx.note(`first probe: ${c1.read.started} read(s) of the frames, ${scriptsStarted(c1)} injection(s), three more probes: ${reads} read(s), ${sent} injection(s), ${scriptsOpen(c2)} open`);
+      if (bare.length) return `setup failed: a loaded frame is without the script after the first probe (${JSON.stringify(bare)})`;
+      if (scriptsStarted(c1) !== 2) return `setup failed: the first probe did not send the script to the top frame and the player frame (${JSON.stringify(c1)})`;
+      if (sent) return `BUG: three probes on a page whose frames have the script sent ${sent} content-script injection(s)`;
+      if (reads !== 3) return `BUG: three probes read the frames ${reads} times, one read each is what they cost`;
+      return true;
+    } finally {
+      await injectSpyOff(ctx.sw);
+      await closeLatePage(ctx.sw, page, tabId);
+    }
+  },
+
+  // A page that has finished loading, its playing hookable clip in a frame of another site,
+  // which has a thread of its own. That thread is busy when the level is set, so the frame
+  // answers neither the read nor the probe in time, and the slider move has to decide without
+  // it (no capture can start in this harness, so its answer is none). No signal follows from the
+  // page: the clip just keeps playing. Once the frame is free, the read that came late brings a
+  // pass, and the tab ends in element mode on that frame. Twice: the extension's first contact
+  // with the page and a stall of 1.2 s, and a page whose frames have the script already and a
+  // stall of 3 s, where the slider move also has to answer long before the stall ends. Two more
+  // probes during that stall share the one read that is open: no second one starts.
+  async s105o_busy_player_frame_ends_in_element_mode(ctx) {
+    const one = async (state, busyMs) => {
+      const tag = `s105=o${busyMs}`;
+      const page = await newLatePage(ctx.browser, ctx.port, `eager=x&late=none&${tag}`);
+      let tabId = null;
+      try {
+        tabId = await tabIdByUrl(ctx.sw, tag);
+        if (state === "script in") {
+          if ((await raced(ctx.sw.evaluate((t) => ensureContentScript(t).then(() => true), tabId), 2000)) === HUNG) return `setup failed (${state}): the injection did not answer`;
+          await sleep(600);
+        }
+        const frames = await framesNow(ctx.sw, tabId);
+        const inner = frames.find((f) => typeof f.href === "string" && f.href.includes("&eager"));
+        const frame = page.frames().find((f) => f.url().includes("&eager"));
+        const status = await ctx.sw.evaluate(async (t) => (await chrome.tabs.get(t)).status, tabId);
+        if (!inner || !frame) return `setup failed (${state}): no player frame`;
+        frame.evaluate((ms) => { const t = performance.now(); while (performance.now() - t < ms); }, busyMs).catch(() => {});
+        await sleep(50);
+        const t0 = Date.now();
+        const r = await raced(swSetGain(ctx.sw, tabId, 0.05), 8000);
+        const ms = Date.now() - t0;
+        if (state === "script in") for (let i = 0; i < 2; i++) await raced(ctx.sw.evaluate((t) => predictMode(t), tabId), 2000);
+        const reads = (await injectCounts(ctx.sw, tabId)).read;
+        const during = Date.now() - t0;
+        await sleep(Math.max(0, busyMs + 200 - (Date.now() - t0)));
+        let mode = null, m = null;
+        while (Date.now() - t0 < busyMs + 6000) {
+          mode = await swGetMode(ctx.sw, tabId);
+          if (mode && mode.mode === "element" && mode.frameId === inner.frameId) {
+            m = await measureFrame(ctx.sw, tabId, inner.frameId);
+            if (levelIn(m)) break;
+          }
+          await sleep(250);
+        }
+        const took = Date.now() - t0;
+        ctx.note(`${state}, frame busy ${busyMs} ms: script in the frame before ${inner.script}, tab ${status}, setGain ${r === HUNG ? "did not answer" : JSON.stringify(r)} after ${ms} ms, ${reads.started} read(s) started and ${reads.max} open at most ${during} ms into the stall, ${took} ms after the slider move mode ${JSON.stringify(mode)}, measure in the frame ${fmtMeasure(m)}`);
+        if (status !== "complete" || inner.script !== (state === "script in")) return `setup failed (${state}): tab ${status}, script in the frame ${inner.script}`;
+        if (r === HUNG) return `BUG (${state}): setGain did not answer within 8 s while a frame was busy for ${busyMs} ms`;
+        if (state === "script in" && ms >= 2000) return `BUG (${state}): setGain waited ${ms} ms for a frame that was busy for ${busyMs} ms`;
+        if (state === "script in" && during < busyMs && reads.max > 1) return `BUG (${state}): ${reads.max} reads of the frames were open at one time while a frame was busy`;
+        if (!mode || mode.mode !== "element" || mode.frameId !== inner.frameId || !levelIn(m)) return `BUG (${state}): the tab did not end in element mode on the player's frame ${inner.frameId} (mode ${JSON.stringify(mode)}, measure ${fmtMeasure(m)})`;
+        return true;
+      } finally { await closeLatePage(ctx.sw, page, tabId); }
+    };
+    await injectSpyOn(ctx.sw);
+    try {
+      const failed = [];
+      for (const [state, busyMs] of [["first contact", 1200], ["script in", 3000]]) {
+        const r = await one(state, busyMs);
+        if (r !== true) failed.push(r);
+      }
+      return failed.length ? failed.join(" | ") : true;
+    } finally { await injectSpyOff(ctx.sw); }
+  },
+
+  // A restore pass meets a busy frame at the extension's first contact with the page: the
+  // player frame of another site is busy for 1.5 s when the pass starts. The pass goes on without
+  // the read of the frames, takes the clip that plays in the top document and ends. No call
+  // follows, so the read itself sends the script when it comes in: once the frame is free, its
+  // document runs the content script.
+  async s105s_late_read_sends_the_script(ctx) {
+    const page = await newLatePage(ctx.browser, ctx.port, "eager=x&late=none&clip=1&s105=s");
+    let tabId = null;
+    try {
+      tabId = await tabIdByUrl(ctx.sw, "s105=s");
+      const inner = (await framesNow(ctx.sw, tabId)).find((f) => typeof f.href === "string" && f.href.includes("&eager"));
+      const frame = page.frames().find((f) => f.url().includes("&eager"));
+      if (!inner || !frame || inner.script) return `setup failed: the player frame is not as expected (${JSON.stringify(inner)})`;
+      await ctx.sw.evaluate((t) => sset(TABGAIN(t), 0.05), tabId);
+      frame.evaluate((ms) => { const t = performance.now(); while (performance.now() - t < ms); }, 1500).catch(() => {});
+      await sleep(50);
+      const t0 = Date.now();
+      await ctx.sw.evaluate((t) => { kickRestore(t, true); }, tabId);
+      await sleep(1000);
+      const early = await swGetMode(ctx.sw, tabId);
+      const passAt = Date.now() - t0;
+      await sleep(Math.max(0, 1500 + 2000 - (Date.now() - t0)));
+      await waitIdle(ctx.sw, tabId, 6000, 600);
+      const after = (await framesNow(ctx.sw, tabId)).find((f) => f.frameId === inner.frameId);
+      const m = await measureTop(ctx.sw, tabId);
+      ctx.note(`${passAt} ms after the pass started, with the frame still busy, mode ${JSON.stringify(early)}, ${Date.now() - t0} ms after it script in the player frame ${after && after.script}, top clip ${fmtMeasure(m)}`);
+      if (!early || early.mode !== "element" || early.frameId !== 0) return `setup failed: the pass did not take the top clip while the frame was busy (${JSON.stringify(early)})`;
+      if (!after || !after.script) return "BUG: the read that came in late did not send the script to the frame that had been busy";
+      if (!levelIn(m)) return `BUG: the top clip lost the level (${fmtMeasure(m)})`;
+      return true;
+    } finally { await closeLatePage(ctx.sw, page, tabId); }
+  },
+
+  // The load listener of content.js is for lazy iframes alone. A frame that is not lazy and
+  // navigates itself fires the same load event on its frame element, and the tab's load state
+  // reports that navigation already: the top frame sends no ping for it. Counted over 3 s after
+  // the navigation, with the script in the top frame and its earlier pings drained.
+  async s105p_load_of_a_frame_that_is_not_lazy_sends_no_ping(ctx) {
+    const page = await newLatePage(ctx.browser, ctx.port, "eager=plain&s105=p");
+    let tabId = null;
+    try {
+      tabId = await tabIdByUrl(ctx.sw, "s105=p");
+      if ((await raced(ctx.sw.evaluate((t) => ensureContentScript(t).then(() => true), tabId), 2000)) === HUNG) return "BUG: the injection did not answer within 2 s on a page with an unloaded lazy frame";
+      const before = await frameIdNow(ctx.sw, tabId, "&eager");
+      await sleep(2600); // whatever the top frame had to ping about has gone out
+      await swClearSpy(ctx.sw);
+      await page.evaluate(() => { document.getElementById("inner").contentWindow.location.assign("/x-feed.html?plain&moved"); });
+      await sleep(3000);
+      const pings = await ctx.sw.evaluate(() => ({ top: globalThis.__spy.pingsTop, all: globalThis.__spy.pings }));
+      const frames = await framesNow(ctx.sw, tabId);
+      const moved = frames.find((f) => typeof f.href === "string" && f.href.includes("&moved"));
+      const top = frames.find((f) => f.frameId === 0);
+      ctx.note(`frame ${before} navigated itself, ${pings.top} ping(s) from the top frame in 3 s (${pings.all} from all frames), script in the top frame ${top && top.script}`);
+      if (!moved || moved.frameId !== before) return `setup failed: the frame did not navigate (${JSON.stringify(frames)})`;
+      if (!top || !top.script) return "setup failed: the top frame runs no content script";
+      if (pings.top) return `BUG: the top frame sent ${pings.top} ping(s) for the load of a frame that is not lazy`;
+      return true;
+    } finally { await closeLatePage(ctx.sw, page, tabId); }
+  },
+
+  // A frame that waits for its document without being a lazy iframe: its server never answers,
+  // so the frame stays on the empty document it starts with. The worker sends that document the
+  // script once and waits for nothing: the first call is back well inside the 250 ms it grants a
+  // document that has loaded, and seven probes and a slider move later that one injection is
+  // still the only one. On a second page the page itself has put a paragraph into that first
+  // document. A document with content counts as loaded, so the first call waits for it, for
+  // those 250 ms and not longer, and again one injection stays open for it.
+  async s105q_waiting_document_holds_one_injection(ctx) {
+    const one = async (filled) => {
+      const tag = `s105=q${filled ? 2 : 1}`;
+      const what = filled ? "filled" : "empty";
+      const page = await newLatePage(ctx.browser, ctx.port, `clip=1&late=silent${filled ? "&fill=1" : ""}&${tag}`);
+      let tabId = null;
+      try {
+        tabId = await tabIdByUrl(ctx.sw, tag);
+        const first = await raced(ctx.sw.evaluate(async (t) => { const t0 = performance.now(); await ensureContentScript(t); return Math.round(performance.now() - t0); }, tabId), 3000);
+        if (first === HUNG) return `BUG (${what}): the injection did not answer within 3 s on a page with a frame whose server never answers`;
+        const rest = await raced((async () => {
+          for (let i = 0; i < 7; i++) await ctx.sw.evaluate((t) => predictMode(t), tabId);
+          return swSetGain(ctx.sw, tabId, 0.05);
+        })(), 12000);
+        if (rest === HUNG) return `BUG (${what}): seven probes and a slider move did not answer within 12 s`;
+        const c = await injectCounts(ctx.sw, tabId);
+        const late = (await framesNow(ctx.sw, tabId)).find((f) => f.el === "late");
+        ctx.note(`${what}: first injection call ${first} ms, then 7 probes and a slider move: ${c.doc.started} injection(s) into single documents, ${c.doc.max} open at most, ${c.doc.open} open at the end, ${c.top.open} open into the top frame, answer ${JSON.stringify(rest)}`);
+        if (!late || !/^about:blank/.test(late.href || "") || late.script) return `setup failed (${what}): the waiting frame is not as expected (${JSON.stringify(late)})`;
+        if (!filled && first >= 200) return `BUG (${what}): the injection call waited ${first} ms for an empty document`;
+        if (filled && first < 200) return `BUG (${what}): the injection call did not wait for a document with content (${first} ms)`;
+        if (c.doc.started !== 1 || c.doc.max !== 1) return `BUG (${what}): the waiting document was sent ${c.doc.started} injections, ${c.doc.max} open at one time`;
+        if (c.doc.open !== 1 || c.top.open || c.all.started) return `setup failed (${what}): the open injections are not the one for the waiting document (${JSON.stringify(c)})`;
+        if (rest.mode !== "element") return `BUG (${what}): the slider move did not answer element (${JSON.stringify(rest)})`;
+        return true;
+      } finally { await closeLatePage(ctx.sw, page, tabId); }
+    };
+    await injectSpyOn(ctx.sw);
+    try {
+      const failed = [];
+      for (const filled of [false, true]) {
+        const r = await one(filled);
+        if (r !== true) failed.push(r);
+      }
+      return failed.length ? failed.join(" | ") : true;
+    } finally { await injectSpyOff(ctx.sw); }
+  },
+
+  // The top document loads for 3 s (a script its server holds keeps the parser), and the page's
+  // player sits in a frame whose server answers only after 1 s. The popup's prepare arrives
+  // while that frame is still on the empty document it starts with, and waits for the top
+  // document. After a wait that long the frames are read once more, so the player's document,
+  // which has arrived meanwhile, gets its script before the probe goes out: prepare answers
+  // element. The tab has no level, so no pass helps along.
+  async s105r_frames_are_read_again_after_a_long_wait(ctx) {
+    const page = await ctx.browser.newPage();
+    let tabId = null;
+    try {
+      page.goto(`http://127.0.0.1:${ctx.port}/lazy-host.html?eager=slow&late=none&hold=3000&s105=r`, { waitUntil: "load", timeout: 20000 }).catch(() => {});
+      for (let i = 0; i < 60 && tabId == null; i++) {
+        tabId = await tabIdByUrl(ctx.sw, "s105=r");
+        if (tabId == null) await sleep(50);
+      }
+      if (tabId == null) return "setup failed: the page did not open";
+      await page.waitForFunction(() => !!document.getElementById("inner"), { timeout: 5000, polling: 50 });
+      const at = (await framesNow(ctx.sw, tabId)).find((f) => f.el === "inner");
+      const state = await page.evaluate(() => document.readyState);
+      const t0 = Date.now();
+      const pre = await raced(ctx.sw.evaluate((t) => prepare(t), tabId), 8000);
+      const ms = Date.now() - t0;
+      if (pre === HUNG) return "BUG: prepare did not answer within 8 s on a page whose top document loads for 3 s";
+      const inner = (await framesNow(ctx.sw, tabId)).find((f) => typeof f.href === "string" && f.href.includes("&eager"));
+      ctx.note(`top document ${state} and the player frame at ${at && at.href} when prepare arrived, answer ${JSON.stringify({ mode: pre.mode, gain: pre.gain })} after ${ms} ms, script in the player frame ${inner && inner.script}`);
+      if (state !== "loading" || !at || !/^about:blank/.test(at.href || "")) return `setup failed: top document ${state}, player frame at ${at && at.href} when prepare arrived`;
+      if (pre.gain !== 1) return `setup failed: the tab holds a level (${pre.gain})`;
+      if (pre.mode !== "element") return `BUG: prepare did not find the player whose document arrived during the wait (${JSON.stringify(pre)} after ${ms} ms)`;
+      return true;
+    } finally { await closeLatePage(ctx.sw, page, tabId); }
+  },
+
+  // A top document that gets ready only after the worker has given up on it, on a page that
+  // never finishes loading. A script the server holds keeps the top document's parser, and the
+  // response of a frame never ends, so the tab's load state never reports the page as complete.
+  // A slider move waits for the top frame up to its deadline and goes on without it (no capture
+  // can start in this harness, so its answer is none). Then the server lets the script go. The
+  // page signals nothing: its clip just keeps playing. The injection the slider move gave up on
+  // settles as the top document gets ready and brings a pass, and the tab ends in element mode
+  // on the clip.
+  async s105t_top_document_ready_after_the_deadline_gets_the_level(ctx) {
+    const page = await ctx.browser.newPage();
+    let tabId = null;
+    try {
+      page.goto(`http://127.0.0.1:${ctx.port}/lazy-host.html?clip=1&late=open&hold=gate&s105=t`, { waitUntil: "load", timeout: 60000 }).catch(() => {});
+      for (let i = 0; i < 60 && tabId == null; i++) {
+        tabId = await tabIdByUrl(ctx.sw, "s105=t");
+        if (tabId == null) await sleep(50);
+      }
+      if (tabId == null) return "setup failed: the page did not open";
+      await page.waitForFunction(() => { const v = document.getElementById("clip"); return !!v && !v.paused && v.readyState >= 2; }, { timeout: 5000, polling: 100 });
+      await swClearSpy(ctx.sw);
+      let t0 = Date.now();
+      const r = await raced(swSetGain(ctx.sw, tabId, 0.05), 15000);
+      const ms = Date.now() - t0;
+      if (r === HUNG) return "BUG: setGain did not answer within 15 s on a page whose top document is not ready";
+      const state = await page.evaluate(() => document.readyState);
+      const early = await swGetMode(ctx.sw, tabId);
+      await page.evaluate(() => fetch("/open-gate").then(() => true));
+      t0 = Date.now();
+      let mode = null, m = null;
+      while (Date.now() - t0 < 8000) {
+        mode = await swGetMode(ctx.sw, tabId);
+        if (mode && mode.mode === "element" && mode.frameId === 0) {
+          m = await measureTop(ctx.sw, tabId);
+          if (levelIn(m)) break;
+        }
+        await sleep(250);
+      }
+      const took = Date.now() - t0;
+      const end = await page.evaluate(() => document.readyState);
+      const status = await ctx.sw.evaluate(async (t) => (await chrome.tabs.get(t)).status, tabId);
+      const pings = await ctx.sw.evaluate(() => globalThis.__spy.pings);
+      ctx.note(`setGain ${JSON.stringify(r)} after ${ms} ms with the top document ${state}, mode then ${JSON.stringify(early)}, ${took} ms after the server let the script go the top document is ${end}, the tab ${status}, ${pings} ping(s) from the page, mode ${JSON.stringify(mode)}, measure ${fmtMeasure(m)}`);
+      if (ms < 9000 || state !== "loading" || early) return `setup failed: setGain answered after ${ms} ms with the top document ${state} and mode ${JSON.stringify(early)}, not at the deadline of a document that is still loading`;
+      if (end === "loading") return "setup failed: the top document did not get ready";
+      if (status === "complete") return "setup failed: the tab's load state reports the page as complete, which brings a pass of its own";
+      if (!mode || mode.mode !== "element" || mode.frameId !== 0 || !levelIn(m)) return `BUG: the tab did not end in element mode on the clip once its top document was ready (mode ${JSON.stringify(mode)}, measure ${fmtMeasure(m)})`;
+      return true;
+    } finally { await closeLatePage(ctx.sw, page, tabId); }
+  },
+
+  // A page whose player frame is busy again and again. The frame of another site runs its thread
+  // in stretches of 450 ms for 6 s, and between two stretches it does only what waits by then.
+  // Every frame has the script, the tab holds a level, and one signal comes in. The read of the
+  // frames comes back after the grace, so the pass goes on without it, takes the clip in the top
+  // document and ends. The read starts no pass when it comes in: one pass runs for the one
+  // signal. A pass for each such read would meet the busy frame again, and the tab would run
+  // passes one after the other for as long as the frame keeps this up.
+  async s105u_often_busy_frame_runs_a_bounded_number_of_passes(ctx) {
+    const page = await newLatePage(ctx.browser, ctx.port, "eager=x&late=none&clip=1&s105=u");
+    let tabId = null;
+    try {
+      tabId = await tabIdByUrl(ctx.sw, "s105=u");
+      if ((await raced(ctx.sw.evaluate((t) => ensureContentScript(t).then(() => true), tabId), 2000)) === HUNG) return "setup failed: the injection did not answer";
+      await sleep(600);
+      const frames = await framesNow(ctx.sw, tabId);
+      const frame = page.frames().find((f) => f.url().includes("&eager"));
+      if (!frame || frames.length < 2 || !frames.every((f) => f.script)) return `setup failed: not every frame has the script (${JSON.stringify(frames)})`;
+      // Counts the tab's passes and collects the reads of its frames, with what became of each.
+      await ctx.sw.evaluate((t) => {
+        const st = globalThis.__s105u = { pass: restoreAfterLoad, read: readFrames, passes: 0, reads: new Set() };
+        restoreAfterLoad = (id, ...rest) => { if (id === t) st.passes++; return st.pass(id, ...rest); };
+        readFrames = (id) => { const rd = st.read(id); if (id === t) st.reads.add(rd); return rd; };
+        return sset(TABGAIN(t), 0.05);
+      }, tabId);
+      const busyMs = 6000, stretch = 450;
+      // The next stretch is posted as a message: it runs behind what has queued up meanwhile and
+      // ahead of anything that comes later.
+      frame.evaluate((total, stretch) => {
+        const until = performance.now() + total;
+        const ch = new MessageChannel();
+        const run = () => {
+          const t = performance.now();
+          while (performance.now() - t < stretch);
+          if (performance.now() < until) ch.port2.postMessage(0);
+        };
+        ch.port1.onmessage = run;
+        run();
+      }, busyMs, stretch).catch(() => {});
+      await sleep(100);
+      await ctx.sw.evaluate((t) => { kickRestore(t, true); }, tabId);
+      await sleep(busyMs + 500);
+      const quiet = await waitIdle(ctx.sw, tabId, 8000, 800);
+      const c = await ctx.sw.evaluate(() => {
+        const st = globalThis.__s105u;
+        return { passes: st.passes, reads: st.reads.size, late: [...st.reads].filter((rd) => rd.left).length };
+      });
+      const mode = await swGetMode(ctx.sw, tabId);
+      ctx.note(`frame busy in stretches of ${stretch} ms for ${busyMs} ms: ${c.passes} pass(es), ${c.reads} read(s) of the frames, ${c.late} of them back after the grace, passes over ${quiet}, mode ${JSON.stringify(mode)}`);
+      if (!c.late) return "setup failed: no read came back after the grace, so the frame was not busy when the pass read the frames";
+      if (c.passes > 2) return `BUG: one signal brought ${c.passes} passes on a page with a frame that is busy again and again`;
+      if (!c.passes || !mode || mode.mode !== "element" || mode.frameId !== 0) return `BUG: the pass did not leave the level on the top clip (${c.passes} pass(es), mode ${JSON.stringify(mode)})`;
+      return true;
+    } finally {
+      await ctx.sw.evaluate(() => {
+        const st = globalThis.__s105u;
+        if (!st) return;
+        restoreAfterLoad = st.pass;
+        readFrames = st.read;
+        delete globalThis.__s105u;
+      }).catch(() => {});
+      await closeLatePage(ctx.sw, page, tabId);
+    }
+  },
+
+  // A pass goes on without the read of the frames, and the document that gets the script from
+  // that read holds the tab's player. The player frame of another site is busy for 2.5 s at the
+  // extension's first contact with the page. The pass takes the clip in the top document and
+  // ends. Then that clip pauses, which the page signals to nobody. Once the frame is free, the
+  // read comes in and sends the frame's document the script, and that injection brings a pass as
+  // it settles: the tab ends in element mode on the player's frame, with the level there.
+  async s105v_script_from_a_late_read_brings_a_pass(ctx) {
+    const page = await newLatePage(ctx.browser, ctx.port, "eager=x&late=none&clip=1&s105=v");
+    let tabId = null;
+    try {
+      tabId = await tabIdByUrl(ctx.sw, "s105=v");
+      const inner = (await framesNow(ctx.sw, tabId)).find((f) => typeof f.href === "string" && f.href.includes("&eager"));
+      const frame = page.frames().find((f) => f.url().includes("&eager"));
+      if (!inner || !frame || inner.script) return `setup failed: the player frame is not as expected (${JSON.stringify(inner)})`;
+      await ctx.sw.evaluate((t) => sset(TABGAIN(t), 0.05), tabId);
+      await swClearSpy(ctx.sw);
+      const busyMs = 2500;
+      frame.evaluate((ms) => { const t = performance.now(); while (performance.now() - t < ms); }, busyMs).catch(() => {});
+      await sleep(50);
+      const t0 = Date.now();
+      await ctx.sw.evaluate((t) => { kickRestore(t, true); }, tabId);
+      let early = null;
+      while (Date.now() - t0 < busyMs - 700) {
+        const cur = await ctx.sw.evaluate(async (t) => ({ mode: await sget(TABMODE(t)), running: restoring.has(t) }), tabId);
+        if (cur.mode && cur.mode.mode === "element" && cur.mode.frameId === 0 && !cur.running) { early = cur.mode; break; }
+        await sleep(100);
+      }
+      const passAt = Date.now() - t0;
+      await page.evaluate(() => { document.getElementById("clip").pause(); });
+      const pausedAt = Date.now() - t0;
+      await sleep(Math.max(0, busyMs + 200 - (Date.now() - t0)));
+      let mode = null, m = null;
+      while (Date.now() - t0 < busyMs + 6000) {
+        mode = await swGetMode(ctx.sw, tabId);
+        if (mode && mode.mode === "element" && mode.frameId === inner.frameId) {
+          m = await measureFrame(ctx.sw, tabId, inner.frameId);
+          if (levelIn(m)) break;
+        }
+        await sleep(250);
+      }
+      const took = Date.now() - t0;
+      const after = (await framesNow(ctx.sw, tabId)).find((f) => f.frameId === inner.frameId);
+      const pings = await ctx.sw.evaluate(() => globalThis.__spy.pings);
+      ctx.note(`frame busy ${busyMs} ms: the pass ended on ${JSON.stringify(early)} after ${passAt} ms, the top clip paused after ${pausedAt} ms, ${took} ms after the pass started script in the player frame ${after && after.script}, ${pings} ping(s) from the page, mode ${JSON.stringify(mode)}, measure in the frame ${fmtMeasure(m)}`);
+      if (!early || pausedAt > busyMs - 400) return `setup failed: the pass did not take the top clip and end while the frame was busy (${JSON.stringify(early)} after ${passAt} ms)`;
+      if (!after || !after.script) return "BUG: the read that came in late did not send the script to the frame that had been busy";
+      if (!mode || mode.mode !== "element" || mode.frameId !== inner.frameId || !levelIn(m)) return `BUG: the tab did not end in element mode on the player's frame ${inner.frameId} (mode ${JSON.stringify(mode)}, measure ${fmtMeasure(m)})`;
+      return true;
+    } finally { await closeLatePage(ctx.sw, page, tabId); }
+  },
+
+  // A press on a clip that was hooked earlier, is paused, and has its graph asleep. Clip A gets
+  // the level (0.05x) and pauses, a click moves the hook to clip B, and A goes dormant. Then the
+  // pointer goes down on A, in three states of the frame: B still plays as the hook, B is the
+  // hook and paused, and no hook at all (B's post has left the page, with the worker's passes
+  // held back). Right after the pointerdown and before any play event, A's source feeds its gain
+  // node and A is the clip the frame holds, and the extension's script has thrown nothing, caught
+  // or not. The play that follows the release needs no ping and no engage. In a fourth state
+  // there is no press: the page calls play() and pause() on A in one task, so A's play event
+  // finds it paused. The frame takes A the same way, and nothing is thrown. Every state runs, and
+  // the outcome names each one that failed.
+  async s101n_press_on_dormant_paused_clip_takes_its_graph(ctx) {
+    const one = async (state) => {
+      const page = await newFeedPage(ctx.browser, ctx.port);
+      const tabId = await tabIdOf(ctx.sw, ctx.port);
+      const restore = state === "no hook" ? await dropPasses(ctx.sw, tabId) : null;
+      let watch = null;
+      try {
+        await tapInstall(ctx.sw, tabId);
+        const a = await page.evaluate(() => window.feed.addAudible());
+        await sleep(300);
+        const r1 = await swSetGain(ctx.sw, tabId, 0.05);
+        if (r1.mode !== "element" || !r1.confirmed) return `setup failed (${state}): ${JSON.stringify(r1)}`;
+        await recordReports(ctx.sw, tabId);
+        await page.evaluate((i) => window.feed.pause(i), a);
+        const b = await page.evaluate(() => window.feed.add());
+        await sleep(2600); // the insertion's churn drains
+        await waitIdle(ctx.sw, tabId, 10000, 1200);
+        await clickVideo(page, b); // the pre-hook takes B, A parks and goes dormant
+        await sleep(600);
+        if (state === "hook paused" || state === "play and pause in one task") await page.evaluate((i) => window.feed.pause(i), b);
+        if (state === "no hook") await page.evaluate((i) => { window.feed.pause(i); window.feed.remove(i); }, b);
+        await sleep(600); // the frame's watcher parks the hook of a post that left
+        await waitIdle(ctx.sw, tabId, 8000, 1000);
+        const asleep = await tapOuts(ctx.sw, tabId, a);
+        const live = await measureTop(ctx.sw, tabId);
+        if (!Array.isArray(asleep) || asleep.length) return `setup failed (${state}): A did not go dormant (its source sends to ${JSON.stringify(asleep)})`;
+        if ((state === "no hook") === !!(live && live.ok)) return `setup failed (${state}): the frame's live graph reads ${JSON.stringify(live)}`;
+        watch = await watchErrors(page, true);
+        await swClearSpy(ctx.sw);
+        if (state === "play and pause in one task") {
+          await page.evaluate((i) => { const v = document.getElementById(i); v.play().catch(() => {}); v.pause(); }, a);
+          await sleep(500);
+        } else {
+          const pos = await page.evaluate((i) => window.feed.point(i), a);
+          await sleep(250);
+          await page.mouse.move(pos.x, pos.y);
+          await page.mouse.down();
+          await sleep(300);
+        }
+        const outs = await tapOuts(ctx.sw, tabId, a);
+        const m = await measureTop(ctx.sw, tabId);
+        const held = await heldClip(ctx.sw, page, tabId, state === "no hook" ? [a] : [a, b]);
+        const st = await page.evaluate((i) => window.feed.state(i), a);
+        ctx.note(`${state}: A paused ${st.paused}, its source sends to ${JSON.stringify(outs)}, live graph ${JSON.stringify(m && { ok: m.ok, parked: m.parked })}, held clip ${held === a ? "A" : held === b ? "B" : "none"}, ${watch.errors.length} error(s)`);
+        if (!st.paused) return `setup failed (${state}): A plays already`;
+        if (watch.errors.length) return `BUG (${state}): the page script threw: ${watch.errors.join(" | ")}`;
+        if (!Array.isArray(outs) || outs[0] !== "GainNode") return `BUG (${state}): A's source does not feed its gain node (it sends to ${JSON.stringify(outs)})`;
+        if (!m || !m.ok || held !== a) return `BUG (${state}): the frame does not hold A (live graph ${JSON.stringify(m)}, held clip ${held === b ? "B" : held})`;
+        if (state !== "play and pause in one task") {
+          await page.mouse.up();
+          const hooked = await assertHookedInPage(ctx, page, a, state);
+          if (hooked !== true) return `BUG: ${hooked}`;
+          if (watch.errors.length) return `BUG (${state}): the page script threw at the play: ${watch.errors.join(" | ")}`;
+        }
+        return true;
+      } finally {
+        await page.mouse.up().catch(() => {});
+        if (watch) await watch.close();
+        if (restore) await restore();
+        await swSetGain(ctx.sw, tabId, 1).catch(() => {});
+        await page.close();
+      }
+    };
+    const failed = [];
+    for (const state of ["hook plays", "hook paused", "no hook", "play and pause in one task"]) {
+      const r = await one(state);
+      if (r !== true) failed.push(r);
+    }
+    return failed.length ? failed.join(" | ") : true;
+  },
+
+  // The redirect check ahead of time keeps to two new requests per probe. Five same-origin clips
+  // that have data play muted, served so that every check reaches the server. Nothing sounds and
+  // the last full walk lies back far enough, so the probe starts one and the frame reports twice:
+  // at once and when the walk is complete. Both reports together start at most two checks. With
+  // seven more clips and twelve more probes the frame stays at eight for its lifetime.
+  async s79e_probe_keeps_to_two_redirect_checks(ctx) {
+    const page = await newFeedPage(ctx.browser, ctx.port);
+    try {
+      const tabId = await tabIdOf(ctx.sw, ctx.port);
+      await ctx.sw.evaluate((t) => ensureContentScript(t), tabId);
+      const injectedAt = Date.now();
+      await recordReports(ctx.sw, tabId);
+      const add = (from, to) => page.evaluate((from, to) => {
+        const ids = [];
+        for (let n = from; n <= to; n++) ids.push(window.feed.addSrc(`/fresh.wav?n=${n}`, { muted: true }));
+        return ids;
+      }, from, to);
+      const loaded = (ids) => page.waitForFunction((list) => list.every((i) => { const v = document.getElementById(i); return !!v && v.readyState >= 2; }), { timeout: 8000 }, ids);
+      const checks = () => ctx.counts["/fresh.wav"] || 0;
+      await loaded(await add(1, 5));
+      await sleep(Math.max(300, injectedAt + 2600 - Date.now())); // past the interval of full walks
+      const base = checks();
+      await asContentScript(ctx.sw, tabId, () => { window.__reports.length = 0; return true; });
+      await ctx.sw.evaluate((t) => chrome.tabs.sendMessage(t, { cmd: "probe" }, { frameId: 0 }).catch(() => null), tabId);
+      await sleep(800);
+      const reports = ((await asContentScript(ctx.sw, tabId, () => window.__reports)) || []).map((c) => c.length);
+      const first = checks() - base;
+      await loaded(await add(6, 12));
+      for (let i = 0; i < 12; i++) {
+        await ctx.sw.evaluate((t) => chrome.tabs.sendMessage(t, { cmd: "probe" }, { frameId: 0 }).catch(() => null), tabId);
+        await sleep(200);
+      }
+      await sleep(500);
+      const total = checks() - base;
+      ctx.note(`first probe: reports of ${JSON.stringify(reports)} elements, ${first} new redirect check(s), ${total} in all after twelve more probes over twelve clips`);
+      if (reports.length < 2) return `setup failed: no full walk was due at the probe, the frame reported ${reports.length} time(s)`;
+      if (first < 1) return "setup failed: the probe started no redirect check";
+      if (first > 2) return `BUG: one probe started ${first} redirect checks, the promise is at most two`;
+      if (total > 8) return `BUG: the frame started ${total} redirect checks, the promise is at most eight per page load`;
+      return true;
+    } finally { await page.close(); }
   },
 
   // Release must reach the swapped-in hook: boost, swap, click (boost lands), then 1.0x.
